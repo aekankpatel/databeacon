@@ -1,0 +1,51 @@
+[
+  {
+    "id": "revenue_decline_attribution",
+    "question": "Why did our revenue decline last quarter, and which customer segments contributed most?",
+    "expected_tools": ["profile_dataset", "run_sql", "period_comparison", "create_chart"],
+    "acceptable_tools": ["trend_analysis", "compare_groups", "descriptive_statistics", "column_values", "detect_anomalies", "correlation_analysis"],
+    "gold_sql": "SELECT ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-07-01' AND order_date < '2025-10-01'), 2) AS q3, ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-10-01'), 2) AS q4 FROM ecommerce_orders",
+    "expected_entities": [["SMB"], ["West"]],
+    "scripted": true
+  },
+  {
+    "id": "discount_shift",
+    "question": "Which product category saw the largest increase in average discount in Q4 2025 compared with Q3 2025?",
+    "expected_tools": ["profile_dataset", "run_sql"],
+    "acceptable_tools": ["compare_groups", "period_comparison", "create_chart", "descriptive_statistics", "column_values"],
+    "gold_sql": "SELECT ROUND(AVG(discount_pct) FILTER (WHERE order_date >= '2025-10-01'), 2) AS q4_discount FROM ecommerce_orders WHERE product_category = 'Electronics'",
+    "expected_entities": [["Electronics"]]
+  },
+  {
+    "id": "shipping_by_region",
+    "question": "Which region has the slowest shipping times, and is the difference between regions statistically significant?",
+    "expected_tools": ["profile_dataset", "compare_groups"],
+    "acceptable_tools": ["run_sql", "create_chart", "descriptive_statistics", "column_values"],
+    "gold_sql": "SELECT ROUND(AVG(days_to_ship), 2) AS west_avg FROM ecommerce_orders WHERE region = 'West'",
+    "expected_entities": [["West"], ["significant"]]
+  },
+  {
+    "id": "return_rate",
+    "question": "Which product category has the highest return rate?",
+    "expected_tools": ["profile_dataset", "run_sql"],
+    "acceptable_tools": ["create_chart", "chi_square_test", "compare_groups", "column_values"],
+    "gold_sql": "SELECT ROUND(100.0 * AVG(CASE WHEN is_returned THEN 1 ELSE 0 END), 1) AS apparel_return_pct FROM ecommerce_orders WHERE product_category = 'Apparel'",
+    "expected_entities": [["Apparel"]]
+  },
+  {
+    "id": "revenue_trend",
+    "question": "Is monthly revenue trending up or down, and when did the most significant shift happen?",
+    "expected_tools": ["profile_dataset", "trend_analysis"],
+    "acceptable_tools": ["run_sql", "create_chart", "detect_anomalies"],
+    "gold_sql": "SELECT ROUND(SUM(revenue), 2) AS dec_2025 FROM ecommerce_orders WHERE order_date >= '2025-12-01'",
+    "expected_entities": [["2025", "October", "Oct", "Q4"]]
+  },
+  {
+    "id": "data_quality",
+    "question": "Are there data quality problems in this dataset, such as missing values or outliers?",
+    "expected_tools": ["profile_dataset"],
+    "acceptable_tools": ["run_sql", "detect_anomalies", "descriptive_statistics", "column_values"],
+    "gold_sql": "SELECT COUNT(*) - COUNT(days_to_ship) AS missing_days_to_ship FROM ecommerce_orders",
+    "expected_entities": [["days_to_ship"]]
+  }
+]
