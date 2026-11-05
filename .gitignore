@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Runtime data
+backend/data/
+data/
+backend/sample_data/ecommerce_orders.csv
+backend/evals/results/eval_*.json
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Env / editors / OS
+.env
+.idea/
+.vscode/
+.DS_Store
