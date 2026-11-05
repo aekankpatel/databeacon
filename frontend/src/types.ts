@@ -1,0 +1,179 @@
+export interface Dataset {
+  id: string;
+  name: string;
+  table: string;
+  filename: string;
+  created_at: string;
+  row_count: number;
+  column_count: number;
+  columns: { name: string; type: string }[];
+}
+
+export interface ColumnProfile {
+  name: string;
+  type: string;
+  role: string;
+  missing: number;
+  missing_pct: number;
+  distinct: number;
+  stats?: Record<string, number | string | null>;
+  top_values?: { value: string; count: number }[];
+  outliers_iqr?: number;
+}
+
+export interface Profile {
+  table: string;
+  row_count: number;
+  column_count: number;
+  columns: ColumnProfile[];
+  strong_correlations: { a: string; b: string; pearson_r: number }[];
+  warnings: string[];
+  sample_rows: Record<string, unknown>[];
+  summary: string;
+}
+
+export interface TimelineEvent {
+  id: string;
+  type: "node" | "llm" | "tool" | "decision" | "guardrail" | "discovery" | "error";
+  name: string;
+  status: "running" | "ok" | "error" | "warning";
+  started_at: string;
+  duration_ms: number;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  sql?: string;
+  server?: string;
+  tokens?: { input_tokens: number; output_tokens: number };
+  evidence_id?: string;
+}
+
+export interface Verification {
+  status: "verified" | "partially_verified" | "unverified" | "qualitative";
+  checked_numbers: number;
+  supported: number;
+  supported_values: string[];
+  unsupported_values: string[];
+  missing_evidence_ids: string[];
+}
+
+export interface Finding {
+  title: string;
+  statement: string;
+  evidence_ids: string[];
+  confidence: string;
+  verification?: Verification;
+}
+
+export interface Chart {
+  chart_id: string;
+  title: string;
+  chart_type: string;
+  figure: { data: unknown[]; layout: Record<string, unknown> };
+  evidence_id?: string;
+  sql?: string;
+}
+
+export interface Evidence {
+  id: string;
+  tool: string;
+  server: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  error: string | null;
+  elapsed_ms: number;
+  iteration: number;
+  purpose: string;
+  sql: string | null;
+  summary: string;
+  preview: { columns: string[]; rows: unknown[][] } | null;
+  data?: unknown;
+}
+
+export interface Plan {
+  objective: string;
+  key_metric: string;
+  time_scope: string;
+  hypotheses: { id: string; statement: string; approach: string }[];
+  steps: string[];
+}
+
+export interface Reflection {
+  iteration: number;
+  sufficient: boolean;
+  confidence: number;
+  hypothesis_status: Record<string, string>;
+  gaps: string[];
+  next_actions: string[];
+}
+
+export interface RunMetrics {
+  latency_s: number;
+  llm_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  tool_calls: number;
+  tool_errors: number;
+  sql_queries: number;
+}
+
+export interface RunResult {
+  plan?: Plan;
+  reflections?: Reflection[];
+  synthesis?: {
+    title: string;
+    summary: string;
+    findings: Finding[];
+    limitations: string[];
+    recommendations: string[];
+    summary_verification?: Verification;
+  };
+  verification?: {
+    findings_total: number;
+    findings_verified: number;
+    numeric_claims: number;
+    numeric_claims_supported: number;
+    hallucination_rate: number;
+    unsupported: { finding: string; values: string[] }[];
+  };
+  charts?: Chart[];
+  evidence?: Evidence[];
+  timeline: TimelineEvent[];
+  metrics: RunMetrics;
+  report?: { ok: boolean; path: string | null; error: string | null };
+  errors?: string[];
+  stop_reason?: string;
+  iterations?: number;
+}
+
+export interface Run {
+  id: string;
+  dataset_id: string;
+  question: string;
+  status: string;
+  created_at: string;
+  finished_at: string | null;
+  result: RunResult | null;
+}
+
+export interface RunSummary {
+  id: string;
+  dataset_id: string;
+  question: string;
+  status: string;
+  created_at: string;
+}
+
+export interface Catalog {
+  tools: { name: string; server: string; description: string; input_schema: Record<string, unknown> }[];
+  resources: { server: string; uri: string; name: string; description: string; template?: boolean }[];
+  prompts: { server: string; name: string; description: string; arguments: string[] }[];
+}
+
+export interface Health {
+  status: string;
+  version: string;
+  llm: { provider: string; model: string; configured: boolean };
+  mcp_transport: string;
+}
