@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "databeacon-database": {
+      "command": "python",
+      "args": ["-m", "databeacon.mcp_servers.database"],
+      "cwd": "/path/to/databeacon/backend",
+      "env": { "DATABEACON_DATA_DIR": "/path/to/databeacon/backend/data" }
+    },
+    "databeacon-analysis": {
+      "command": "python",
+      "args": ["-m", "databeacon.mcp_servers.analysis"],
+      "cwd": "/path/to/databeacon/backend",
+      "env": { "DATABEACON_DATA_DIR": "/path/to/databeacon/backend/data" }
+    },
+    "databeacon-report": {
+      "command": "python",
+      "args": ["-m", "databeacon.mcp_servers.report"],
+      "cwd": "/path/to/databeacon/backend",
+      "env": { "DATABEACON_DATA_DIR": "/path/to/databeacon/backend/data" }
+    }
+  }
+}
