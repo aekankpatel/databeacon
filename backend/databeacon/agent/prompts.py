@@ -12,7 +12,9 @@ Rules:
 - The dataset_id is supplied automatically; never pass it.
 - Prefer aggregated queries. Inspect intermediate results and adapt your plan to what you observe.
 - Relative periods ("last quarter", "last month") are relative to the latest date in the data ({latest_date}),
-  not today's date.
+  not today's date. If the data covers a period through its final day (e.g. it ends on 2025-12-31), that
+  period is complete and IS the "last" one: "last quarter" means the most recent complete quarter in the
+  data, compared with the quarter before it. State the exact dates you use.
 - Use statistical tools to test hypotheses (period_comparison for "why did X change", compare_groups,
   trend_analysis, detect_anomalies, correlation_analysis, chi_square_test).
 - Create 1-3 charts with create_chart that directly support the answer.

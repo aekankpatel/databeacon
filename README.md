@@ -149,8 +149,9 @@ After that it either uses the fallback provider or fails the run with a clear "b
 so it can never run into paid usage on its own. `GET /api/usage` shows today's spend.
 
 For `gpt-oss-120b`, 1M input tokens cost 31,818 neurons and 1M output tokens cost 68,182 neurons.
-One analysis uses very roughly 600–1,500 neurons, so about 6–15 analyses fit in a day.
-`DATABEACON_REASONING_EFFORT=low` reduces output tokens further.
+Measured: one analysis used **1,500–3,000 neurons** (40–80k tokens) with the default budgets, so plan on
+roughly 3–5 analyses per day on the free tier. Lower `DATABEACON_MAX_TOOL_CALLS` or set
+`DATABEACON_REASONING_EFFORT=low` to fit more.
 
 Workers AI defaults to **256 output tokens** per response. That is too few for a reasoning model:
 the hidden reasoning can use all of it and leave an empty answer. DataBeacon sets
