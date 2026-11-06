@@ -229,6 +229,10 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
               {live.charts.map((c) => (
                 <div key={c.chart_id}>
                   <PlotlyChart chart={c} />
+                  {c.origin === "fallback" && (
+                    <div className="small"><span className="badge purple">auto fallback</span>{" "}
+                      <span className="muted">The agent created no chart; this one was generated from its last tabular result.</span></div>
+                  )}
                   {c.evidence_id && (
                     <div className="small muted">Source: <span className="ev-chip" onClick={() => showEvidence(c.evidence_id!)}>{c.evidence_id}</span></div>
                   )}
@@ -277,7 +281,7 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
                 {evidence.map((e) => (
                   <tr key={e.id} onClick={() => setDrawer(e)} style={{ cursor: "pointer" }}>
                     <td className="mono">{e.id}</td>
-                    <td>{e.tool}</td>
+                    <td>{e.tool}{e.origin && e.origin !== "agent" && <span className={`badge ${e.origin === "fallback" ? "purple" : "muted"}`} style={{ marginLeft: 6 }}>{e.origin === "fallback" ? "auto fallback" : "pipeline"}</span>}</td>
                     <td style={{ whiteSpace: "normal" }}>
                       {e.purpose && <div>{e.purpose}</div>}
                       <div className="small muted">{e.summary}</div>

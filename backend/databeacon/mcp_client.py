@@ -71,6 +71,30 @@ def _compact_schema(node: Any, _in_properties: bool = False) -> Any:
     return node
 
 
+def validate_arguments(schema: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """Validate tool arguments against the tool's JSON schema; return a readable problem or None."""
+    import jsonschema
+
+    try:
+        errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(args), key=lambda e: list(e.path))
+    except jsonschema.SchemaError:
+        return None
+    if not errors:
+        return None
+    msgs = []
+    for e in errors[:3]:
+        where = ".".join(str(p) for p in e.path) or (e.validator == "required" and "") or "arguments"
+        if e.validator == "required":
+            msgs.append(e.message.replace(" is a required property", " is required"))
+        elif e.validator == "minItems":
+            msgs.append(f"'{where}' must list at least {e.validator_value} item(s), got {json.dumps(e.instance)}")
+        elif e.validator == "type":
+            msgs.append(f"'{where}' must be of type {e.validator_value}, got {json.dumps(e.instance)[:60]}")
+        else:
+            msgs.append(f"'{where}': {e.message[:160]}")
+    return "; ".join(msgs)
+
+
 @dataclass
 class ToolInfo:
     name: str
@@ -191,6 +215,10 @@ class MCPToolHub:
                 args[k] = v
         # drop hallucinated arguments that the tool does not accept
         args = {k: v for k, v in args.items() if k in props}
+        problem = validate_arguments(info.input_schema, args)
+        if problem:  # reject before the round-trip, with a message the model can act on
+            return ToolCallResult(name, info.server, False, None, f"Invalid arguments for {name}: {problem}",
+                                  (time.perf_counter() - started) * 1000)
         try:
             res = await self._clients[info.server].call_tool(name, args)
         except Exception as exc:  # transport / protocol failures

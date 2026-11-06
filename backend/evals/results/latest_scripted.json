@@ -1,6 +1,6 @@
 {
   "meta": {
-    "timestamp": "2026-11-06T07:06:59+00:00",
+    "timestamp": "2026-11-06T23:29:04+00:00",
     "mode": "scripted",
     "provider": "scripted",
     "model": "scripted",
@@ -9,7 +9,10 @@
       "max_tool_calls": 24,
       "max_steps_per_iteration": 8
     },
-    "incomplete": null
+    "incomplete": null,
+    "budget": {
+      "neurons_spent": 0.0
+    }
   },
   "summary": {
     "cases": 2,
@@ -21,10 +24,10 @@
     "numerical_evidence_rate": 1.0,
     "alignment_rate": 1.0,
     "sql_validity": 0.584,
-    "tool_selection_f1": 0.889,
+    "tool_selection_f1": 1.0,
     "hallucination_rate": 0.0,
-    "avg_latency_s": 1.005,
-    "avg_total_tokens": 25755.0,
+    "avg_latency_s": 1.03,
+    "avg_total_tokens": 25761.5,
     "avg_tool_calls": 8.5,
     "error_recovery_rate": 1.0,
     "scorer_calibration": 1.0,
@@ -76,14 +79,14 @@
       "sql_validity": 0.5,
       "numbers_stated": 1.0,
       "tool_selection": {
-        "precision": 0.8,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.889
+        "f1": 1.0
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 1.33,
-      "total_tokens": 20271,
+      "latency_s": 1.38,
+      "total_tokens": 20278,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
@@ -92,7 +95,7 @@
         },
         "act": {
           "calls": 8,
-          "input_tokens": 11024,
+          "input_tokens": 11031,
           "output_tokens": 172
         },
         "reflect": {
@@ -108,6 +111,8 @@
       },
       "llm_calls": 13,
       "tool_calls": 7,
+      "agent_tool_calls": 6,
+      "fallback_charts": 0,
       "iterations": 2,
       "trajectory": {
         "profiled_first": true,
@@ -120,7 +125,6 @@
         "revisions": 1
       },
       "tools_used": [
-        "profile_dataset",
         "run_sql",
         "run_sql",
         "period_comparison",
@@ -180,14 +184,14 @@
       "sql_validity": 0.5,
       "numbers_stated": 0.5,
       "tool_selection": {
-        "precision": 0.8,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.889
+        "f1": 1.0
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.59,
-      "total_tokens": 29437,
+      "latency_s": 0.56,
+      "total_tokens": 29443,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
@@ -196,7 +200,7 @@
         },
         "act": {
           "calls": 12,
-          "input_tokens": 18633,
+          "input_tokens": 18639,
           "output_tokens": 264
         },
         "reflect": {
@@ -212,6 +216,8 @@
       },
       "llm_calls": 18,
       "tool_calls": 7,
+      "agent_tool_calls": 6,
+      "fallback_charts": 0,
       "iterations": 3,
       "trajectory": {
         "profiled_first": true,
@@ -224,7 +230,6 @@
         "revisions": 0
       },
       "tools_used": [
-        "profile_dataset",
         "run_sql",
         "run_sql",
         "period_comparison",
@@ -283,14 +288,14 @@
       "sql_validity": 0.5,
       "numbers_stated": 1.0,
       "tool_selection": {
-        "precision": 0.8,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.889
+        "f1": 1.0
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.75,
-      "total_tokens": 29715,
+      "latency_s": 0.72,
+      "total_tokens": 29722,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
@@ -299,7 +304,7 @@
         },
         "act": {
           "calls": 12,
-          "input_tokens": 18743,
+          "input_tokens": 18750,
           "output_tokens": 264
         },
         "reflect": {
@@ -315,6 +320,8 @@
       },
       "llm_calls": 18,
       "tool_calls": 7,
+      "agent_tool_calls": 6,
+      "fallback_charts": 0,
       "iterations": 3,
       "trajectory": {
         "profiled_first": true,
@@ -327,7 +334,6 @@
         "revisions": 0
       },
       "tools_used": [
-        "profile_dataset",
         "run_sql",
         "run_sql",
         "period_comparison",
@@ -384,14 +390,14 @@
       "sql_validity": 0.667,
       "numbers_stated": 1.0,
       "tool_selection": {
-        "precision": 0.8,
+        "precision": 1.0,
         "recall": 1.0,
-        "f1": 0.889
+        "f1": 1.0
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
       "latency_s": 0.68,
-      "total_tokens": 31239,
+      "total_tokens": 31245,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
@@ -400,7 +406,7 @@
         },
         "act": {
           "calls": 12,
-          "input_tokens": 19380,
+          "input_tokens": 19386,
           "output_tokens": 264
         },
         "reflect": {
@@ -416,6 +422,8 @@
       },
       "llm_calls": 18,
       "tool_calls": 10,
+      "agent_tool_calls": 9,
+      "fallback_charts": 0,
       "iterations": 3,
       "trajectory": {
         "profiled_first": true,
@@ -428,7 +436,6 @@
         "revisions": 0
       },
       "tools_used": [
-        "profile_dataset",
         "run_sql",
         "run_sql",
         "period_comparison",

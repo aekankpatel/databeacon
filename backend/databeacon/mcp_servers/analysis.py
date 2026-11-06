@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from .. import analysis as A
 from ..config import get_settings
@@ -76,25 +77,25 @@ def build_analysis_server(registry: DatasetRegistry | None = None) -> MCPServer:
 
     @mcp.tool(
         description=(
-            "Compare a metric between a previous and a current period and attribute the change to the values of "
-            "one or more dimensions (e.g. ['customer_segment'] or ['customer_segment','region']). Returns totals, "
-            "delta, % change and each segment's share of the total change. metric is SUM(value_column) unless "
-            "agg='count'|'avg'. Dates are ISO, end dates exclusive."
+            "Attribute the change in SUM(value_column) between two periods to the values of the grouping columns. "
+            "dimensions is REQUIRED: 1-3 column names, e.g. [\"customer_segment\"]. Dates ISO, ends exclusive. "
+            "Returns totals, % change and each group's delta and share of the change."
         )
     )
     @expected_errors
-    async def period_comparison(dataset_id: str, date_column: str, value_column: str, dimensions: list[str] | str,
+    async def period_comparison(dataset_id: str, date_column: str, value_column: str,
+                                dimensions: Annotated[list[str], Field(
+                                    min_length=1, max_length=3,
+                                    description="Grouping columns to attribute the change to (1-3)")],
                                 previous_start: str, previous_end: str, current_start: str, current_end: str,
                                 agg: str = "sum", filter_sql: str | None = None) -> dict[str, Any]:
         ds = reg.get(dataset_id)
         cols = {c["name"] for c in ds.columns}
-        if isinstance(dimensions, str):
-            dimensions = [d.strip() for d in dimensions.split(",") if d.strip()]
         for c in [date_column, value_column, *dimensions]:
             if c not in cols:
                 raise ValueError(f"Unknown column '{c}'. Available: {', '.join(sorted(cols))}")
         if not dimensions:
-            raise ValueError("Provide at least one dimension column, e.g. dimensions=['customer_segment']")
+            raise ValueError("dimensions must name at least one grouping column, e.g. [\"customer_segment\"]")
         ps, pe = check_date(previous_start, "previous_start"), check_date(previous_end, "previous_end")
         cs, ce = check_date(current_start, "current_start"), check_date(current_end, "current_end")
         aggs = {"sum": f"SUM({quote_ident(value_column)})", "count": "COUNT(*)", "avg": f"AVG({quote_ident(value_column)})"}

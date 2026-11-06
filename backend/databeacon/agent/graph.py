@@ -226,10 +226,13 @@ class AnalystAgent:
                 for e in state["evidence"] if e["tool"] != "profile_dataset"]
         return "\n".join(rows) or "-"
 
-    def _add_evidence(self, state: AgentState, tool: str, args: dict[str, Any], result, purpose: str = "") -> dict[str, Any]:
+    def _add_evidence(self, state: AgentState, tool: str, args: dict[str, Any], result, purpose: str = "",
+                      origin: str = "agent") -> dict[str, Any]:
+        """origin: 'agent' (chosen by the model), 'system' (run by the pipeline, e.g. profiling) or
+        'fallback' (added automatically because the agent did not do it)."""
         eid = f"E{len(state['evidence'])}"
         data = result.data
-        entry = {
+        entry = {"origin": origin,
             "id": eid, "tool": tool, "server": result.server, "args": args, "ok": result.ok, "error": result.error,
             "data": data, "elapsed_ms": round(result.elapsed_ms, 2), "iteration": state.get("iteration", 1),
             "purpose": purpose or args.get("purpose") or args.get("title") or "",
@@ -240,19 +243,20 @@ class AnalystAgent:
         state["evidence"].append(entry)
         if result.ok and tool == "create_chart" and isinstance(data, dict):
             data["evidence_id"] = eid
+            data["origin"] = origin
             state["charts"].append(data)
         return entry
 
     # ------------------------------------------------------------------ nodes
     async def understand(self, state: AgentState) -> AgentState:
         async with self.rec.span("node", "understand_dataset") as ev:
-            async with self.rec.span("tool", "profile_dataset", server="database", input={}) as tev:
+            async with self.rec.span("tool", "profile_dataset", server="database", input={}, origin="system") as tev:
                 res = await self.hub.call("profile_dataset", {}, self._ctx(state))
                 tev["status"] = "ok" if res.ok else "error"
                 tev["output"] = summarize("profile_dataset", res.data) if res.ok else res.error
             if not res.ok:
                 raise RuntimeError(f"Could not profile dataset: {res.error}")
-            entry = self._add_evidence(state, "profile_dataset", {}, res, "Dataset understanding")
+            entry = self._add_evidence(state, "profile_dataset", {}, res, "Dataset understanding", origin="system")
             tev["evidence_id"] = entry["id"]
             ev["output"] = res.data.get("summary")
             self.rec.publish({"kind": "profile", "profile": res.data})
@@ -376,7 +380,7 @@ class AnalystAgent:
                                             tool_call_id=call["id"], name=name))
                 continue
             info = self.hub.tools.get(name)
-            async with self.rec.span("tool", name, server=info.server if info else "?", input=args) as tev:
+            async with self.rec.span("tool", name, server=info.server if info else "?", input=args, origin="agent") as tev:
                 res = await self.hub.call(name, args, self._ctx(state))
                 state["tool_calls"] += 1
                 entry = self._add_evidence(state, name, args, res)
@@ -399,13 +403,25 @@ class AnalystAgent:
                                      separators=(",", ":"))
             else:
                 content = json.dumps({"evidence_id": entry["id"], "error": str(res.error)[:600],
-                                      "hint": "Fix the arguments (check column names / SQL) and retry."})
+                                      "hint": self._error_hint(state, name, str(res.error))})
             new_msgs.append(ToolMessage(content, tool_call_id=call["id"], name=name))
             self.rec.publish({"kind": "evidence", "evidence": {k: v for k, v in entry.items() if k != "data"}})
             if res.ok and name == "create_chart":
                 self.rec.publish({"kind": "chart", "chart": res.data})
         return {"messages": state["messages"] + new_msgs, "tool_calls": state["tool_calls"],
                 "evidence": state["evidence"], "charts": state["charts"], "errors": state["errors"]}
+
+    def _error_hint(self, state: AgentState, tool: str, error: str) -> str:
+        """Point the model at the fix, using the task contract where it knows the answer."""
+        spec = state.get("spec") or {}
+        group_by = spec.get("group_by") or []
+        if ("dimensions" in error or "group_column" in error) and group_by:
+            arg = "dimensions" if tool == "period_comparison" else "group_column"
+            val = json.dumps(group_by) if arg == "dimensions" else json.dumps(group_by[0])
+            return f"The task contract's grouping is {', '.join(group_by)}: retry with {arg}={val}."
+        if "Unknown column" in error or "Binder Error" in error:
+            return "Check the column names against the dataset profile and retry."
+        return "Fix the arguments (check column names / SQL) and retry."
 
     async def reflect(self, state: AgentState) -> AgentState:
         async with self.rec.span("node", f"reflect (iteration {state['iteration']})") as ev:
@@ -512,11 +528,14 @@ class AnalystAgent:
             ctype = "line" if any(k in (dtypes[0] or "").upper() for k in ("DATE", "TIME")) else "bar"
             args = {"sql": e["sql"], "chart_type": ctype, "x": cols[0], "y": [num[0]],
                     "title": e.get("purpose") or f"{num[0]} by {cols[0]}"}
-            async with self.rec.span("tool", "create_chart", server="report", input=args) as tev:
+            self.rec.log("decision", "fallback_chart", output={
+                "reason": "the agent created no chart", "source_evidence": e["id"], "chart_type": ctype})
+            async with self.rec.span("tool", "create_chart", server="report", input=args, origin="fallback") as tev:
                 res = await self.hub.call("create_chart", args, self._ctx(state))
                 tev["status"] = "ok" if res.ok else "error"
             if res.ok:
-                entry = self._add_evidence(state, "create_chart", args, res, "Auto-generated chart")
+                entry = self._add_evidence(state, "create_chart", args, res,
+                                           f"Auto-generated fallback chart from {e['id']}", origin="fallback")
                 tev["evidence_id"] = entry["id"]
                 self.rec.publish({"kind": "chart", "chart": res.data})
                 return

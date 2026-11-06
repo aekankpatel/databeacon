@@ -85,7 +85,8 @@ def score_case(case: dict[str, Any], run: dict[str, Any], gold: dict[str, Any]) 
     answer = syn.get("answer") or {}
     ver = result.get("verification") or {}
     metrics = result.get("metrics") or {}
-    used = [e["tool"] for e in evidence]
+    # tool selection is about the agent's choices: pipeline (system) calls and fallback charts don't count
+    used = [e["tool"] for e in evidence if e.get("origin", "agent") == "agent"]
     sql_calls = [e for e in evidence if e["tool"] == "run_sql"]
     sql_valid = sum(1 for e in sql_calls if e["ok"]) / len(sql_calls) if sql_calls else None
 
@@ -134,6 +135,7 @@ def score_case(case: dict[str, Any], run: dict[str, Any], gold: dict[str, Any]) 
         "latency_s": metrics.get("latency_s"), "total_tokens": metrics.get("total_tokens"),
         "tokens_by_stage": metrics.get("tokens_by_stage"),
         "llm_calls": metrics.get("llm_calls"), "tool_calls": metrics.get("tool_calls"),
+        "agent_tool_calls": metrics.get("agent_tool_calls"), "fallback_charts": metrics.get("fallback_charts", 0),
         "iterations": result.get("iterations"), "trajectory": trajectory(result), "tools_used": used,
         "expect_success": case.get("expect_success", True),
     }

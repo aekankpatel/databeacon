@@ -28,6 +28,12 @@ export function Timeline({ events, onEvidence }: { events: TimelineEvent[]; onEv
                 {e.name}
                 {e.status === "error" && <span className="badge err" style={{ marginLeft: 6 }}>error</span>}
                 {e.status === "warning" && <span className="badge warn" style={{ marginLeft: 6 }}>warning</span>}
+                {e.origin === "fallback" && (
+                  <span className="badge purple" style={{ marginLeft: 6 }} title="Added automatically because the agent created no chart">
+                    auto fallback
+                  </span>
+                )}
+                {e.origin === "system" && <span className="badge muted" style={{ marginLeft: 6 }}>pipeline</span>}
               </div>
               <div className="tl-type">
                 {e.type}

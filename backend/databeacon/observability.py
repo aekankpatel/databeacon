@@ -146,6 +146,8 @@ class RunRecorder:
             "output_tokens": self.tokens["output_tokens"],
             "total_tokens": sum(self.tokens.values()),
             "tool_calls": len(tool_events),
+            "agent_tool_calls": sum(1 for e in tool_events if e.get("origin", "agent") == "agent"),
+            "fallback_charts": sum(1 for e in tool_events if e.get("origin") == "fallback"),
             "tool_errors": sum(1 for e in tool_events if e["status"] == "error"),
             "sql_queries": sum(1 for e in tool_events if e["name"] == "run_sql"),
             "served_by": dict(self.served_by),

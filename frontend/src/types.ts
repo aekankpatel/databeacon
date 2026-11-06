@@ -46,6 +46,7 @@ export interface TimelineEvent {
   server?: string;
   tokens?: { input_tokens: number; output_tokens: number };
   evidence_id?: string;
+  origin?: "agent" | "system" | "fallback";
 }
 
 export interface Verification {
@@ -72,10 +73,12 @@ export interface Chart {
   figure: { data: unknown[]; layout: Record<string, unknown> };
   evidence_id?: string;
   sql?: string;
+  origin?: "agent" | "system" | "fallback";
 }
 
 export interface Evidence {
   id: string;
+  origin?: "agent" | "system" | "fallback";
   tool: string;
   server: string;
   args: Record<string, unknown>;

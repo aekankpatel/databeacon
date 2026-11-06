@@ -23,8 +23,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# conservative per-case estimate used by --max-neurons before starting a case
-EST_NEURONS_PER_CASE = 3500
+# first-case estimate for --max-neurons (the most expensive case measured so far used ~3,000 neurons);
+# later cases use 1.25 x the most expensive case seen in this run
+EST_FIRST_CASE_NEURONS = 3000
 
 
 def _numbers(db_path: Path, sql: str) -> list[float]:
@@ -80,7 +81,10 @@ async def main() -> int:
     ap.add_argument("--min-calibration", type=float, default=None,
                     help="exit 1 if the scorer misjudges any deliberately wrong scripted run")
     ap.add_argument("--max-neurons", type=float, default=None,
-                    help="live mode: stop before a case if Cloudflare spend could exceed this many neurons")
+                    help="live mode: hard cap on Cloudflare neurons for this run (enforced per call)")
+    ap.add_argument("--allow-fallback", action="store_true",
+                    help="live mode: allow a configured fallback provider (off by default: the benchmark should "
+                         "measure one provider and never switch to possibly paid inference)")
     args = ap.parse_args()
 
     os.environ.setdefault("DATABEACON_DATA_DIR", tempfile.mkdtemp(prefix="databeacon_eval_"))
@@ -109,15 +113,39 @@ async def main() -> int:
     registry = DatasetRegistry(settings.datasets_dir)
     ds = registry.ingest_file(csv, name="E-commerce orders")
     usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+    budget_meta: dict[str, Any] = {}
+    if args.mode == "live":
+        if os.environ.get("DATABEACON_FALLBACK_PROVIDER") and not args.allow_fallback:
+            print("Refusing to run: a fallback provider is configured (use --allow-fallback to permit it).")
+            return 2
+        if os.environ.get("DATABEACON_ALLOW_PAID_INFERENCE", "").lower() in {"1", "true", "yes"}:
+            print("Refusing to run: DATABEACON_ALLOW_PAID_INFERENCE is set; benchmarks must stay on the free tier.")
+            return 2
+        used0 = usage_db.used_today()
+        hard_limit = usage_db.daily_limit
+        if args.max_neurons is not None:
+            # lower the guard's daily limit for this process: no call may push today's total past it
+            hard_limit = min(hard_limit, used0 + args.max_neurons)
+            os.environ["DATABEACON_CLOUDFLARE_DAILY_NEURONS"] = str(hard_limit)
+            usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+        budget_meta = {"neurons_used_today_before": round(used0, 1), "run_cap": args.max_neurons,
+                       "hard_daily_limit_for_run": hard_limit, "free_allocation": 10_000}
+        print(f"Budget: {used0:.0f} neurons used today; this run may spend at most {hard_limit - used0:.0f}.",
+              flush=True)
 
     scores = []
     incomplete = None
     spent = 0.0
+    max_case = 0.0
     for case in cases:
-        if args.mode == "live" and args.max_neurons is not None and spent + EST_NEURONS_PER_CASE > args.max_neurons:
-            incomplete = f"stopped before '{case['id']}': --max-neurons {args.max_neurons:.0f} would be exceeded"
-            print(f"  {incomplete}", flush=True)
-            break
+        if args.mode == "live":
+            est = EST_FIRST_CASE_NEURONS if not max_case else max(1500.0, 1.25 * max_case)
+            remaining = usage_db.remaining()
+            if est > remaining:
+                incomplete = (f"stopped before '{case['id']}': estimated {est:.0f} neurons for the case, "
+                              f"{remaining:.0f} left under the cap")
+                print(f"  {incomplete}", flush=True)
+                break
         factory = None
         if args.mode == "scripted":
             from databeacon.agent.testing import scripted_ecommerce_llm
@@ -130,6 +158,7 @@ async def main() -> int:
         run = await manager.run_sync(ds.id, case["question"])
         neurons = round(usage_db.used_today() - neurons_before, 1)
         spent += neurons
+        max_case = max(max_case, neurons)
         gold = resolve_gold(registry.db_path(ds.id), case, by_id)
         score = score_case(case, run, gold)
         score["cloudflare_neurons"] = neurons
@@ -155,7 +184,7 @@ async def main() -> int:
             "model": "scripted" if args.mode == "scripted" else info["model"],
             "budgets": {"max_iterations": settings.max_iterations, "max_tool_calls": settings.max_tool_calls,
                         "max_steps_per_iteration": settings.max_steps_per_iteration},
-            "incomplete": incomplete}
+            "incomplete": incomplete, "budget": {**budget_meta, "neurons_spent": round(spent, 1)}}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     payload = {"meta": meta, "summary": summary, "cases": scores}

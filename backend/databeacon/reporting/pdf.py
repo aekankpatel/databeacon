@@ -228,7 +228,9 @@ def build_pdf(path: Path, report: dict[str, Any]) -> dict[str, Any]:
         for ch in charts[:8]:
             dr = chart_drawing(ch)
             if dr is not None:
-                story.append(KeepTogether([dr, Spacer(1, 10)]))
+                note = ([_p("Auto-generated fallback chart: the agent did not create a chart.", st["muted"])]
+                        if ch.get("origin") == "fallback" else [])
+                story.append(KeepTogether([dr, *note, Spacer(1, 10)]))
 
     limitations = report.get("limitations") or []
     if limitations:

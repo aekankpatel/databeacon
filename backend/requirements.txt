@@ -16,3 +16,4 @@ openpyxl>=3.1
 opentelemetry-api>=1.45
 opentelemetry-sdk>=1.45
 anyio>=4.15
+jsonschema>=4.20

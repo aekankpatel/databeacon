@@ -256,3 +256,58 @@ def test_compact_rounding_still_verifies():
     assert shown["rows"][0] == [1082156.0, 0.2211, 946659.27]
     f = [{"title": "t", "statement": "Revenue fell from 1,082,156 to 946,659.27; discount 22.1%.", "evidence_ids": ["E1"]}]
     assert verify_findings(f, [{"id": "E1", "tool": "run_sql", "ok": True, "data": data}])["hallucination_rate"] == 0
+
+
+# ----------------------------------------------------------------- argument validation
+async def test_grouping_argument_is_validated_before_the_call(registry, dataset):
+    from databeacon.mcp_client import MCPToolHub
+
+    base = {"date_column": "order_date", "value_column": "revenue", "previous_start": "2025-07-01",
+            "previous_end": "2025-10-01", "current_start": "2025-10-01", "current_end": "2026-01-01"}
+    async with MCPToolHub(registry) as hub:
+        schema = next(t for t in hub.llm_tools() if t["function"]["name"] == "period_comparison")["function"]
+        assert schema["parameters"]["properties"]["dimensions"]["minItems"] == 1
+        assert "REQUIRED" in schema["description"]
+        for bad, msg in (([], "at least 1"), (None, "is required"), ("customer_segment", "type array")):
+            args = dict(base, **({} if bad is None else {"dimensions": bad}))
+            res = await hub.call("period_comparison", args, {"dataset_id": dataset.id})
+            assert not res.ok and msg in res.error, res.error
+        ok = await hub.call("period_comparison", dict(base, dimensions=["customer_segment"]), {"dataset_id": dataset.id})
+        assert ok.ok
+
+
+def test_error_hint_names_the_contract_grouping():
+    from databeacon.agent.graph import AnalystAgent
+
+    state = {"spec": {"group_by": ["customer_segment"]}}
+    hint = AnalystAgent._error_hint(None, state, "period_comparison", "'dimensions' must list at least 1 item(s)")
+    assert 'dimensions=["customer_segment"]' in hint
+
+
+# ----------------------------------------------------------------- chart provenance
+async def test_fallback_chart_is_labelled_and_not_credited_to_the_agent(registry, dataset):
+    from dataclasses import replace
+
+    from databeacon.config import get_settings
+    from evals.metrics import score_case
+
+    settings = replace(get_settings(), max_tool_calls=3, max_iterations=1)  # too few calls to reach create_chart
+    m = RunManager(registry, settings, llm_factory=lambda: scripted_ecommerce_llm(hallucinate_first=False))
+    run = await m.run_sync(dataset.id, "Why did our revenue decline last quarter, and which segments contributed?")
+    res = run["result"]
+    charts = [e for e in res["timeline"] if e["type"] == "tool" and e["name"] == "create_chart"]
+    assert charts and all(e["origin"] == "fallback" for e in charts)
+    assert "fallback_chart" in [e["name"] for e in res["timeline"]]
+    assert all(c["origin"] == "fallback" for c in res["charts"])
+    assert res["metrics"]["fallback_charts"] == 1
+    assert res["metrics"]["agent_tool_calls"] == res["metrics"]["tool_calls"] - 2  # minus profiling and fallback
+    score = score_case({"id": "x", "expected_tools": ["create_chart"]}, run, {})
+    assert "create_chart" not in score["tools_used"] and score["tool_selection"]["recall"] == 0
+
+
+async def test_agent_chart_is_labelled_agent(registry, dataset):
+    m = RunManager(registry, llm_factory=lambda: scripted_ecommerce_llm(hallucinate_first=False))
+    run = await m.run_sync(dataset.id, "Why did our revenue decline last quarter, and which segments contributed?")
+    charts = [e for e in run["result"]["timeline"] if e["type"] == "tool" and e["name"] == "create_chart"]
+    assert charts and all(e["origin"] == "agent" for e in charts)
+    assert run["result"]["metrics"]["fallback_charts"] == 0
