@@ -1,0 +1,139 @@
+{
+  "meta": {
+    "timestamp": "2026-11-06T23:20:54+00:00",
+    "mode": "live",
+    "provider": "cloudflare",
+    "model": "@cf/openai/gpt-oss-120b",
+    "budgets": {
+      "max_iterations": 2,
+      "max_tool_calls": 24,
+      "max_steps_per_iteration": 6
+    },
+    "incomplete": null
+  },
+  "summary": {
+    "cases": 1,
+    "task_success_rate": 1.0,
+    "primary_conclusion_rate": 1.0,
+    "period_correct_rate": 1.0,
+    "metric_correct_rate": 1.0,
+    "grouping_correct_rate": 1.0,
+    "numerical_evidence_rate": 1.0,
+    "alignment_rate": 1.0,
+    "sql_validity": 1.0,
+    "tool_selection_f1": 0.857,
+    "hallucination_rate": 0.0,
+    "avg_latency_s": 63.98,
+    "avg_total_tokens": 27268.0,
+    "avg_tool_calls": 8.0,
+    "error_recovery_rate": 1.0,
+    "scorer_calibration": 1.0,
+    "total_cloudflare_neurons": 1065.8
+  },
+  "cases": [
+    {
+      "case": "revenue_decline_attribution",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 1.0,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 0.75,
+        "recall": 1.0,
+        "f1": 0.857
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "4/4",
+      "latency_s": 63.98,
+      "total_tokens": 27268,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 1094,
+          "output_tokens": 1179
+        },
+        "act": {
+          "calls": 6,
+          "input_tokens": 16813,
+          "output_tokens": 2127
+        },
+        "reflect": {
+          "calls": 1,
+          "input_tokens": 1808,
+          "output_tokens": 650
+        },
+        "synthesize": {
+          "calls": 1,
+          "input_tokens": 2104,
+          "output_tokens": 1493
+        }
+      },
+      "llm_calls": 9,
+      "tool_calls": 8,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 1,
+        "errors_recovered": 1,
+        "replans": 0,
+        "realignments": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "period_comparison",
+        "run_sql",
+        "period_comparison",
+        "run_sql",
+        "run_sql",
+        "run_sql",
+        "create_chart"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 1065.8,
+      "served_by": {
+        "cloudflare:@cf/openai/gpt-oss-120b": 9
+      }
+    }
+  ]
+}
