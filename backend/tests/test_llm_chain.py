@@ -57,3 +57,22 @@ async def test_budget_exhausted_skips_cloudflare(tmp_path):
     assert cf.calls == 0  # never called once over budget
     with pytest.raises(QuotaExhaustedError):
         await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], budget).ainvoke([HumanMessage("hi")])
+
+
+def test_cloudflare_payload_normalisation(monkeypatch):
+    from langchain_core.messages import SystemMessage, ToolMessage
+
+    from databeacon.llm import build_provider_model
+
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "0" * 32)
+    monkeypatch.setenv("DATABEACON_INJECTED_AUTH", "1")
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    model = build_provider_model("cloudflare")
+    msgs = [SystemMessage("s"), HumanMessage("q"),
+            AIMessage("", tool_calls=[{"name": "run_sql", "args": {"sql": "SELECT 1"}, "id": "c1", "type": "tool_call"}]),
+            ToolMessage('{"rows": [[1]]}', tool_call_id="c1", name="run_sql")]
+    payload = model._get_request_payload(msgs)
+    assert all(m["content"] is not None for m in payload["messages"])
+    assert "name" not in payload["messages"][-1]
+    assert payload["max_tokens"] == 4096
+    assert model.openai_api_key.get_secret_value() == "injected-by-egress-proxy"

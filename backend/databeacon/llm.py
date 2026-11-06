@@ -89,6 +89,31 @@ def provider_info() -> dict[str, Any]:
             "fallback": {"provider": fb, "model": model_for(fb), "configured": is_configured(fb)} if fb else None}
 
 
+def _cloudflare_chat_class():
+    from langchain_openai import ChatOpenAI
+
+    class CloudflareChatOpenAI(ChatOpenAI):
+        """Workers AI's OpenAI-compatible endpoint is stricter than OpenAI's:
+
+        * an assistant message that carries tool_calls must have string content - ``null`` (what the
+          OpenAI spec and LangChain send) is rejected with a bare HTTP 400;
+        * a ``name`` on tool-result messages makes gpt-oss leak its reasoning into the answer.
+        """
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):  # noqa: ANN001
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            if "max_completion_tokens" in payload:  # send both spellings; Workers AI default is 256
+                payload.setdefault("max_tokens", payload["max_completion_tokens"])
+            for m in payload.get("messages", []):
+                if m.get("content") is None:
+                    m["content"] = ""
+                if m.get("role") == "tool":
+                    m.pop("name", None)
+            return payload
+
+    return CloudflareChatOpenAI
+
+
 def build_provider_model(provider: str, temperature: float = 0.1, timeout: float = 90.0,
                          model: str | None = None) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
@@ -124,7 +149,8 @@ def build_provider_model(provider: str, temperature: float = 0.1, timeout: float
     effort = os.environ.get("DATABEACON_REASONING_EFFORT", "").strip().lower()
     if effort in {"low", "medium", "high"}:
         extra["reasoning_effort"] = effort
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=temperature, timeout=timeout,
+    cls = _cloudflare_chat_class() if provider == "cloudflare" else ChatOpenAI
+    return cls(model=model, api_key=api_key, base_url=base_url, temperature=temperature, timeout=timeout,
                       max_retries=1, max_tokens=int(os.environ.get("DATABEACON_MAX_OUTPUT_TOKENS", 4096)), **extra)
 
 
