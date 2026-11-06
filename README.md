@@ -136,18 +136,41 @@ with a deterministic offline policy written for the bundled sample dataset.
 6. Your **Account ID** is in the right-hand sidebar of the account overview page, or in the dashboard
    URL (`dash.cloudflare.com/<ACCOUNT_ID>/...`). This is `CLOUDFLARE_ACCOUNT_ID`.
 
-The free tier includes 10,000 neurons per day. DataBeacon calls Workers AI through its OpenAI-compatible
-endpoint (`/client/v4/accounts/<id>/ai/v1`) with `@cf/meta/llama-3.3-70b-instruct-fp8-fast` by
-default. Override it with `DATABEACON_MODEL`; any Workers AI model that supports function calling will work.
+DataBeacon calls Workers AI through its OpenAI-compatible endpoint
+(`/client/v4/accounts/<id>/ai/v1/chat/completions`) and uses **`@cf/openai/gpt-oss-120b`** by default,
+which supports native tool calling. Override it with `DATABEACON_MODEL`.
 
-Other providers:
+### Staying inside the free tier
+
+Workers AI's free allocation is **10,000 neurons per day**, reset at 00:00 UTC. DataBeacon keeps a
+per-day ledger (`<data dir>/llm_usage.sqlite`) of the neurons Cloudflare reports with every response,
+and stops calling Cloudflare once `DATABEACON_CLOUDFLARE_DAILY_NEURONS` (default 9,000) is reached.
+After that it either uses the fallback provider or fails the run with a clear "budget reached" message,
+so it can never run into paid usage on its own. `GET /api/usage` shows today's spend.
+
+For `gpt-oss-120b`, 1M input tokens cost 31,818 neurons and 1M output tokens cost 68,182 neurons.
+One analysis uses very roughly 600–1,500 neurons, so about 6–15 analyses fit in a day.
+`DATABEACON_REASONING_EFFORT=low` reduces output tokens further.
+
+Workers AI defaults to **256 output tokens** per response. That is too few for a reasoning model:
+the hidden reasoning can use all of it and leave an empty answer. DataBeacon sets
+`DATABEACON_MAX_OUTPUT_TOKENS` (default 4096) on every request.
+
+### Fallback and other providers
 
 | Provider | Variables |
 |---|---|
-| Cloudflare Workers AI (default) | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
-| Groq | `DATABEACON_LLM_PROVIDER=groq`, `GROQ_API_KEY` (default model `openai/gpt-oss-120b`) |
+| Cloudflare Workers AI (primary) | `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` |
+| Groq (fallback or primary) | `DATABEACON_FALLBACK_PROVIDER=groq` + `GROQ_API_KEY` (model `openai/gpt-oss-120b`, override with `DATABEACON_FALLBACK_MODEL`) |
 | Any OpenAI-compatible server (Ollama, vLLM, LM Studio…) | `DATABEACON_LLM_PROVIDER=openai`, `DATABEACON_LLM_BASE_URL`, `DATABEACON_MODEL` |
 | Offline demo | `DATABEACON_LLM_PROVIDER=scripted` |
+
+With a fallback configured, each LLM call tries Cloudflare first. It moves to the fallback when
+Cloudflare errors or the neuron budget is spent. The timeline records which provider served each call.
+
+If your deployment sits behind an egress proxy that injects the `Authorization` header, leave the
+token variables empty and set `DATABEACON_INJECTED_AUTH=1`. DataBeacon then sends a placeholder and
+never reads a token.
 
 ## How the agent works
 
