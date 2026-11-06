@@ -1,23 +1,29 @@
 {
   "meta": {
-    "timestamp": "2026-11-06T05:11:25+00:00",
-    "mode": "scripted",
-    "provider": "scripted",
-    "model": "scripted"
+    "timestamp": "2026-11-06T05:34:38+00:00",
+    "mode": "live",
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "budgets": {
+      "max_iterations": 2,
+      "max_tool_calls": 24,
+      "max_steps_per_iteration": 6
+    },
+    "incomplete": null
   },
   "summary": {
-    "cases": 1,
-    "task_success_rate": 1.0,
-    "sql_validity": 0.5,
-    "sql_gold_match_rate": 1.0,
-    "tool_selection_f1": 1.0,
-    "numerical_accuracy": 1.0,
-    "entity_recall": 1.0,
-    "hallucination_rate": 0.0,
-    "avg_latency_s": 1.36,
-    "avg_total_tokens": 25146.0,
-    "avg_tool_calls": 7.0,
-    "error_recovery_rate": 1.0
+    "cases": 6,
+    "task_success_rate": 0.833,
+    "sql_validity": 1.0,
+    "sql_gold_match_rate": 0.833,
+    "tool_selection_f1": 0.767,
+    "numerical_accuracy": 0.667,
+    "entity_recall": 0.833,
+    "hallucination_rate": 0.019,
+    "avg_latency_s": 164.075,
+    "avg_total_tokens": 21304.667,
+    "avg_tool_calls": 5.0,
+    "error_recovery_rate": 0.6
   },
   "cases": [
     {
@@ -31,7 +37,98 @@
         ]
       ],
       "entity_recall": 1.0,
-      "sql_validity": 0.5,
+      "sql_validity": 1.0,
+      "sql_gold_match": true,
+      "numerical_accuracy": 0.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "7/7",
+      "latency_s": 233.11,
+      "total_tokens": 36487,
+      "llm_calls": 10,
+      "tool_calls": 8,
+      "iterations": 2,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "tool_errors": 2,
+        "errors_recovered": 2,
+        "replans": 1,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "period_comparison",
+        "period_comparison",
+        "run_sql",
+        "compare_groups",
+        "compare_groups",
+        "run_sql",
+        "create_chart"
+      ]
+    },
+    {
+      "case": "discount_shift",
+      "status": "completed",
+      "task_success": true,
+      "error": null,
+      "expected_entities": [
+        [
+          "Electronics"
+        ]
+      ],
+      "entity_recall": 1.0,
+      "sql_validity": null,
+      "sql_gold_match": true,
+      "numerical_accuracy": 1.0,
+      "tool_selection": {
+        "precision": 0.75,
+        "recall": 0.5,
+        "f1": 0.6
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "2/2",
+      "latency_s": 199.6,
+      "total_tokens": 24809,
+      "llm_calls": 8,
+      "tool_calls": 6,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "tool_errors": 3,
+        "errors_recovered": 1,
+        "replans": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "period_comparison",
+        "trend_analysis",
+        "trend_analysis",
+        "trend_analysis",
+        "create_chart"
+      ]
+    },
+    {
+      "case": "shipping_by_region",
+      "status": "completed",
+      "task_success": true,
+      "error": null,
+      "expected_entities": [
+        [
+          "significant"
+        ],
+        [
+          "West"
+        ]
+      ],
+      "entity_recall": 1.0,
+      "sql_validity": 1.0,
       "sql_gold_match": true,
       "numerical_accuracy": 1.0,
       "tool_selection": {
@@ -40,28 +137,149 @@
         "f1": 1.0
       },
       "hallucination_rate": 0.0,
-      "findings_verified": "5/5",
-      "latency_s": 1.36,
-      "total_tokens": 25146,
-      "llm_calls": 13,
-      "tool_calls": 7,
-      "iterations": 2,
+      "findings_verified": "3/3",
+      "latency_s": 102.38,
+      "total_tokens": 13990,
+      "llm_calls": 6,
+      "tool_calls": 4,
+      "iterations": 1,
       "trajectory": {
         "profiled_first": true,
         "duplicate_calls": 0,
-        "tool_errors": 1,
-        "errors_recovered": 1,
-        "replans": 1,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "compare_groups",
+        "create_chart"
+      ]
+    },
+    {
+      "case": "return_rate",
+      "status": "failed",
+      "task_success": false,
+      "error": "ValueError: Model failed to produce valid Plan: 1 validation error for Plan\nobjective\n  Field required [type=missing, input_value={'id': 'H1', 'statement':... identify the maximum.'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/missing",
+      "expected_entities": [
+        [
+          "Apparel"
+        ]
+      ],
+      "entity_recall": 0.0,
+      "sql_validity": null,
+      "sql_gold_match": false,
+      "numerical_accuracy": 0.0,
+      "tool_selection": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0
+      },
+      "hallucination_rate": null,
+      "findings_verified": "0/0",
+      "latency_s": 50.98,
+      "total_tokens": 0,
+      "llm_calls": 0,
+      "tool_calls": 1,
+      "iterations": null,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "revisions": 0
+      },
+      "tools_used": []
+    },
+    {
+      "case": "revenue_trend",
+      "status": "completed",
+      "task_success": true,
+      "error": null,
+      "expected_entities": [
+        [
+          "2025",
+          "October",
+          "Oct",
+          "Q4"
+        ]
+      ],
+      "entity_recall": 1.0,
+      "sql_validity": 1.0,
+      "sql_gold_match": true,
+      "numerical_accuracy": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "3/4",
+      "latency_s": 179.69,
+      "total_tokens": 22468,
+      "llm_calls": 8,
+      "tool_calls": 5,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "trend_analysis",
+        "create_chart",
+        "detect_anomalies"
+      ]
+    },
+    {
+      "case": "data_quality",
+      "status": "completed",
+      "task_success": true,
+      "error": null,
+      "expected_entities": [
+        [
+          "days_to_ship"
+        ]
+      ],
+      "entity_recall": 1.0,
+      "sql_validity": 1.0,
+      "sql_gold_match": true,
+      "numerical_accuracy": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0952,
+      "findings_verified": "5/6",
+      "latency_s": 218.69,
+      "total_tokens": 30074,
+      "llm_calls": 10,
+      "tool_calls": 6,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
         "revisions": 1
       },
       "tools_used": [
         "profile_dataset",
         "run_sql",
+        "detect_anomalies",
         "run_sql",
-        "period_comparison",
-        "period_comparison",
-        "create_chart",
-        "compare_groups"
+        "run_sql",
+        "run_sql"
       ]
     }
   ]
