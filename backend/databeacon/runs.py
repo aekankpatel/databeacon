@@ -129,6 +129,8 @@ class RunManager:
                                              "question": question})
                 status = "completed" if state.get("report", {}).get("ok") else "completed_with_errors"
             except Exception as exc:  # noqa: BLE001
+                while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+                    exc = exc.exceptions[0]  # surface the real cause, not the task-group wrapper
                 rec.log("error", "run_failed", status="error", error=f"{type(exc).__name__}: {exc}",
                         output=traceback.format_exc()[-2000:])
                 state.setdefault("errors", []).append(f"{type(exc).__name__}: {exc}")

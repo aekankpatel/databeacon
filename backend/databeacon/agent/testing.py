@@ -114,6 +114,9 @@ class EcommerceAnalystPolicy:
                           dimensions=["customer_segment", "region"], previous_start="2025-07-01",
                           previous_end="2025-10-01", current_start="2025-10-01", current_end="2026-01-01"),
         ]
+        script.append(lambda: _call("period_comparison", date_column="order_date", value_column="revenue",
+                                    dimensions=["customer_segment"], previous_start="2025-07-01",
+                                    previous_end="2025-10-01", current_start="2025-10-01", current_end="2026-01-01"))
         if self.inject_tool_error:
             script.insert(1, lambda: _call("run_sql", sql="SELECT SUM(revenu) FROM ecommerce_orders",
                                            purpose="typo to exercise error recovery"))
@@ -134,29 +137,41 @@ class EcommerceAnalystPolicy:
 
     def _synthesis(self, task: str) -> dict[str, Any]:
         blocks = _evidence_blocks(task)
-        pc = next((d for t, d in blocks.values() if t == "period_comparison"), None)
-        pc_id = next((i for i, (t, _) in blocks.items() if t == "period_comparison"), None)
+        pcs = [(i, d) for i, (t, d) in blocks.items() if t == "period_comparison"]
+        combo = next(((i, d) for i, d in pcs if len(d.get("dimensions") or []) > 1), None)
+        seg = next(((i, d) for i, d in pcs if d.get("dimensions") == ["customer_segment"]), None)
         cg_id = next((i for i, (t, _) in blocks.items() if t == "compare_groups"), None)
         cg = blocks[cg_id][1] if cg_id else None
         revise = "verification pass found" in task
         findings = []
         summary = "Revenue declined in Q4 2025 versus Q3 2025."
-        if pc:
-            worst = (pc.get("top_negative_contributors") or [{}])[0]
-            summary = (f"Revenue fell from {pc['total_previous']:,.2f} to {pc['total_current']:,.2f} "
-                       f"({pc['total_pct_change']}%). The largest contributor was the {worst.get('customer_segment')} "
-                       f"segment in the {worst.get('region')} region.")
+        if seg:
+            sid, sd = seg
+            top = (sd.get("top_negative_contributors") or [{}])[0]
+            summary = (f"Revenue fell from {sd['total_previous']:,.2f} to {sd['total_current']:,.2f} "
+                       f"({sd['total_pct_change']}%). By customer segment, {top.get('customer_segment')} contributed "
+                       f"most ({top.get('share_of_total_change_pct')}% of the decline).")
             findings.append({
                 "title": "Revenue declined quarter over quarter",
-                "statement": f"Revenue moved from {pc['total_previous']:,.2f} to {pc['total_current']:,.2f}, "
-                             f"a change of {pc['total_delta']:,.2f} ({pc['total_pct_change']}%).",
-                "evidence_ids": [pc_id], "confidence": "high"})
+                "statement": f"Revenue moved from {sd['total_previous']:,.2f} to {sd['total_current']:,.2f}, "
+                             f"a change of {sd['total_delta']:,.2f} ({sd['total_pct_change']}%).",
+                "evidence_ids": [sid], "confidence": "high"})
             findings.append({
-                "title": f"{worst.get('customer_segment')} / {worst.get('region')} drove the decline",
+                "title": f"{top.get('customer_segment')} is the largest contributing segment",
+                "statement": f"{top.get('customer_segment')} revenue fell by {top.get('delta'):,.2f} "
+                             f"({top.get('pct_change')}%), {top.get('share_of_total_change_pct')}% of the total change.",
+                "evidence_ids": [sid], "confidence": "high"})
+        if combo:
+            cid, cd = combo
+            worst = (cd.get("top_negative_contributors") or [{}])[0]
+            summary += (f" At segment-by-region level the sharpest drop is {worst.get('customer_segment')} in "
+                        f"{worst.get('region')}.")
+            findings.append({
+                "title": f"{worst.get('customer_segment')} / {worst.get('region')} is the sharpest local decline",
                 "statement": f"{worst.get('customer_segment')} customers in {worst.get('region')} fell by "
                              f"{worst.get('delta'):,.2f} ({worst.get('pct_change')}%), "
                              f"{worst.get('share_of_total_change_pct')}% of the total change.",
-                "evidence_ids": [pc_id], "confidence": "high"})
+                "evidence_ids": [cid], "confidence": "high"})
         if cg:
             top = cg["groups"][0]
             findings.append({

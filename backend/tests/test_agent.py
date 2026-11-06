@@ -30,7 +30,9 @@ async def test_full_agent_run(registry, dataset):
     assert "revise_unsupported_claims" in names
     assert res["verification"]["hallucination_rate"] == 0
     assert all(f["verification"]["status"] == "verified" for f in res["synthesis"]["findings"])
-    assert "SMB" in res["synthesis"]["summary"] and "West" in res["synthesis"]["summary"]
+    summary = res["synthesis"]["summary"]
+    assert "Enterprise" in summary  # largest decline by segment (data-derived truth)
+    assert "SMB" in summary and "West" in summary  # sharpest segment x region cell
     assert res["charts"] and res["charts"][0]["figure"]
     assert "llm" in types and res["metrics"]["total_tokens"] > 0
     pdf = Path(res["report"]["path"])

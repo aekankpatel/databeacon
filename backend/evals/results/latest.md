@@ -1,4 +1,4 @@
-# DataBeacon evaluation - 2026-11-05T22:11:10+00:00
+# DataBeacon evaluation - 2026-11-06T05:11:25+00:00
 
 Mode: `scripted` · Provider: `scripted` · Model: `scripted`
 
@@ -14,13 +14,13 @@ Mode: `scripted` · Provider: `scripted` · Model: `scripted`
 | numerical accuracy | 1.0 |
 | entity recall | 1.0 |
 | hallucination rate | 0.0 |
-| avg latency s | 1.77 |
-| avg total tokens | 20502.0 |
-| avg tool calls | 6.0 |
+| avg latency s | 1.36 |
+| avg total tokens | 25146.0 |
+| avg tool calls | 7.0 |
 | error recovery rate | 1.0 |
 
 ## Per case
 
 | Case | Success | Entities | SQL gold | Num. acc. | Tool F1 | Halluc. | Latency (s) | Tokens |
 |---|---|---|---|---|---|---|---|---|
-| revenue_decline_attribution | ✅ | 1.0 | True | 1.0 | 1.0 | 0.0 | 1.77 | 20502 |
+| revenue_decline_attribution | ✅ | 1.0 | True | 1.0 | 1.0 | 0.0 | 1.36 | 25146 |

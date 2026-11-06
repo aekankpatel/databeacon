@@ -93,6 +93,15 @@ def build_chat_model(temperature: float = 0.1, timeout: float = 90.0, model: str
 _RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)\s*(ms|s)", re.IGNORECASE)
 
 
+class QuotaExhaustedError(RuntimeError):
+    """The provider's daily quota is used up; retrying within this run is pointless."""
+
+
+def _is_daily_quota(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "per day" in msg or "(tpd)" in msg or "(rpd)" in msg or "daily" in msg and "limit" in msg
+
+
 def _is_retryable(exc: Exception) -> bool:
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
@@ -109,6 +118,9 @@ async def ainvoke_with_retry(llm: Any, messages: list[BaseMessage], attempts: in
         try:
             return await llm.ainvoke(messages)
         except Exception as exc:  # noqa: BLE001
+            if _is_daily_quota(exc):
+                raise QuotaExhaustedError(
+                    f"LLM provider daily quota exhausted: {str(exc)[:300]}") from exc
             if i == attempts - 1 or not _is_retryable(exc):
                 raise
             m = _RETRY_AFTER_RE.search(str(exc))

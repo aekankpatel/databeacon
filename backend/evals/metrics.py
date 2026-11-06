@@ -90,11 +90,14 @@ def score_case(case: dict[str, Any], run: dict[str, Any], gold_values: list[floa
     ent = entities_found(case.get("expected_entities", []), text)
     num_acc = numbers_in_text(gold_values, text)
     gm = gold_match(gold_values, evidence)
-    halluc = ver.get("hallucination_rate", 1.0 if not ver else 0.0)
+    # a run that produced no findings has no hallucination rate (it is still a task failure)
+    halluc = ver.get("hallucination_rate") if ver else None
     completed = run.get("status") == "completed"
-    success = completed and ent == 1.0 and gm and halluc <= 0.1
+    success = completed and ent == 1.0 and gm and halluc is not None and halluc <= 0.1
     return {
         "case": case["id"], "status": run.get("status"), "task_success": success,
+        "error": (result.get("errors") or [None])[-1] if run.get("status") == "failed" else None,
+        "expected_entities": case.get("expected_entities", []),
         "entity_recall": round(ent, 3), "sql_validity": None if sql_valid is None else round(sql_valid, 3),
         "sql_gold_match": gm, "numerical_accuracy": round(num_acc, 3), "tool_selection": ts,
         "hallucination_rate": halluc, "findings_verified": f"{ver.get('findings_verified', 0)}/{ver.get('findings_total', 0)}",

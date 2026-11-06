@@ -30,6 +30,18 @@ def _gold_values(db_path: Path, sql: str) -> list[float]:
     return out
 
 
+def _resolve_entities(db_path: Path, case: dict) -> dict:
+    """Expected answers derived from the data itself (one entity group per query)."""
+    from databeacon.sql_guard import execute_readonly
+
+    groups = [list(g) for g in case.get("expected_entities", [])]
+    for sql in case.get("expected_entities_sql", []):
+        rows = execute_readonly(db_path, sql).rows
+        if rows:
+            groups.append([str(rows[0][0])])
+    return {**case, "expected_entities": groups}
+
+
 def _markdown(summary: dict, scores: list[dict], meta: dict) -> str:
     lines = [f"# DataBeacon evaluation - {meta['timestamp']}", "",
              f"Mode: `{meta['mode']}` · Provider: `{meta['provider']}` · Model: `{meta['model']}`", "",
@@ -87,9 +99,12 @@ async def main() -> int:
         print(f"▶ {case['id']}: {case['question']}", flush=True)
         run = await manager.run_sync(ds.id, case["question"])
         gold = _gold_values(registry.db_path(ds.id), case["gold_sql"])
+        case = _resolve_entities(registry.db_path(ds.id), case)
         score = score_case(case, run, gold)
         scores.append(score)
-        print(f"  status={score['status']} success={score['task_success']} entities={score['entity_recall']} "
+        if score.get("error"):
+            print(f"  error: {score['error'][:200]}", flush=True)
+        print(f"  expected={case['expected_entities']} status={score['status']} success={score['task_success']} entities={score['entity_recall']} "
               f"gold={score['sql_gold_match']} tool_f1={score['tool_selection']['f1']} "
               f"halluc={score['hallucination_rate']} latency={score['latency_s']}s tokens={score['total_tokens']}",
               flush=True)

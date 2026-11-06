@@ -1,6 +1,6 @@
 {
   "meta": {
-    "timestamp": "2026-11-05T22:11:10+00:00",
+    "timestamp": "2026-11-06T05:11:25+00:00",
     "mode": "scripted",
     "provider": "scripted",
     "model": "scripted"
@@ -14,9 +14,9 @@
     "numerical_accuracy": 1.0,
     "entity_recall": 1.0,
     "hallucination_rate": 0.0,
-    "avg_latency_s": 1.77,
-    "avg_total_tokens": 20502.0,
-    "avg_tool_calls": 6.0,
+    "avg_latency_s": 1.36,
+    "avg_total_tokens": 25146.0,
+    "avg_tool_calls": 7.0,
     "error_recovery_rate": 1.0
   },
   "cases": [
@@ -24,6 +24,12 @@
       "case": "revenue_decline_attribution",
       "status": "completed",
       "task_success": true,
+      "error": null,
+      "expected_entities": [
+        [
+          "Enterprise"
+        ]
+      ],
       "entity_recall": 1.0,
       "sql_validity": 0.5,
       "sql_gold_match": true,
@@ -34,11 +40,11 @@
         "f1": 1.0
       },
       "hallucination_rate": 0.0,
-      "findings_verified": "4/4",
-      "latency_s": 1.77,
-      "total_tokens": 20502,
-      "llm_calls": 12,
-      "tool_calls": 6,
+      "findings_verified": "5/5",
+      "latency_s": 1.36,
+      "total_tokens": 25146,
+      "llm_calls": 13,
+      "tool_calls": 7,
       "iterations": 2,
       "trajectory": {
         "profiled_first": true,
@@ -52,6 +58,7 @@
         "profile_dataset",
         "run_sql",
         "run_sql",
+        "period_comparison",
         "period_comparison",
         "create_chart",
         "compare_groups"
