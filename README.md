@@ -22,6 +22,9 @@ Every decision, LLM call, tool call and SQL query is visible in a live **Agent E
 - [How the agent works](#how-the-agent-works)
 - [MCP servers](#mcp-servers)
 - [Evidence verification](#evidence-verification)
+- [Temporal scoping](#temporal-scoping)
+- [Task alignment](#task-alignment)
+- [Token efficiency](#token-efficiency)
 - [Security model](#security-model)
 - [Evaluation framework](#evaluation-framework)
 - [Observability](#observability)
@@ -72,7 +75,9 @@ The agent graph:
 ```mermaid
 stateDiagram-v2
     [*] --> understand: profile dataset + discover tools
-    understand --> plan
+    understand --> scope: resolve time scope from data coverage
+    scope --> [*]: period ambiguous (needs_clarification)
+    scope --> plan: task contract
     plan --> act
     act --> tools: tool calls
     tools --> act: observations
@@ -80,8 +85,10 @@ stateDiagram-v2
     reflect --> replan: gaps & budget left
     replan --> act
     reflect --> synthesize: sufficient / budget exhausted
-    synthesize --> verify
-    verify --> synthesize: unsupported numbers (revise once)
+    synthesize --> verify: numbers + task alignment
+    verify --> realign: wrong period/metric/grouping (once)
+    realign --> act
+    verify --> synthesize: unsupported numbers (revise)
     verify --> report
     report --> [*]
 ```
@@ -144,14 +151,24 @@ which supports native tool calling. Override it with `DATABEACON_MODEL`.
 
 Workers AI's free allocation is **10,000 neurons per day**, reset at 00:00 UTC. DataBeacon keeps a
 per-day ledger (`<data dir>/llm_usage.sqlite`) of the neurons Cloudflare reports with every response,
-and stops calling Cloudflare once `DATABEACON_CLOUDFLARE_DAILY_NEURONS` (default 9,000) is reached.
-After that it either uses the fallback provider or fails the run with a clear "budget reached" message,
-so it can never run into paid usage on its own. `GET /api/usage` shows today's spend.
+and refuses a Cloudflare call unless its **worst-case cost** (the prompt plus the full output allowance)
+still fits under `DATABEACON_CLOUDFLARE_DAILY_NEURONS` (default 9,000). Reservations are atomic, so
+concurrent runs cannot jointly overshoot.
+
+Once the budget is reached, a run either uses the fallback provider or fails with a clear
+"budget reached" message. The guard fails closed:
+- if the ledger cannot be read, Cloudflare is not called;
+- the budget cannot be set above the 10,000 free allocation unless `DATABEACON_ALLOW_PAID_INFERENCE=1`.
+
+The CI live-evaluation job only runs when started by hand, and `evals.run --max-neurons N` caps a
+benchmark run. `GET /api/usage` shows today's spend. The ledger is per data directory, so processes
+that should share one budget must share `DATABEACON_DATA_DIR`.
 
 For `gpt-oss-120b`, 1M input tokens cost 31,818 neurons and 1M output tokens cost 68,182 neurons.
-Measured: one analysis used **1,500–3,000 neurons** (40–80k tokens) with the default budgets, so plan on
-roughly 3–5 analyses per day on the free tier. Lower `DATABEACON_MAX_TOOL_CALLS` or set
-`DATABEACON_REASONING_EFFORT=low` to fit more.
+Measured before the token optimisations: one analysis used **1,500–3,000 neurons** (40–80k tokens).
+On the same trajectory the current prompts send about 30% fewer input tokens (see
+[Token efficiency](#token-efficiency)). That's still only a handful of analyses per day on the free tier.
+Lower `DATABEACON_MAX_TOOL_CALLS` or set `DATABEACON_REASONING_EFFORT=low` to fit more.
 
 Workers AI defaults to **256 output tokens** per response. That is too few for a reasoning model:
 the hidden reasoning can use all of it and leave an empty answer. DataBeacon sets
@@ -178,20 +195,27 @@ never reads a token.
 The orchestration lives in [`backend/databeacon/agent/graph.py`](backend/databeacon/agent/graph.py) as a LangGraph `StateGraph`.
 
 1. **understand**: calls `profile_dataset` over MCP and records the tool catalogue the hub discovered.
-2. **plan**: structured output (`Plan`: objective, key metric, concrete ISO time scope, hypotheses,
-   steps). Relative periods such as "last quarter" are resolved against the latest date *in the data*,
-   not today's date.
-3. **act ⇄ tools**: the LLM is bound to the discovered MCP tools (the `dataset_id` argument is injected
+2. **scope** (deterministic, no LLM): resolves the question's time phrase against the data's coverage
+   (see [Temporal scoping](#temporal-scoping)). If the period cannot be determined reliably, the run stops
+   with `needs_clarification` and concrete options, before any tokens are spent.
+3. **plan**: structured output (`Plan`: objective, question type, metric column, aggregation, grouping,
+   answer target, hypotheses, steps). Plan and scope together form the **task contract**: metric,
+   grouping and exact `[start, end)` periods. The contract is put in every later prompt.
+4. **act ⇄ tools**: the LLM is bound to the discovered MCP tools (the `dataset_id` argument is injected
    by the client and hidden from the model). Every tool result becomes a numbered piece of evidence
    (`E1`, `E2`, …) and goes back to the model in compact form.
-4. **reflect**: structured `Reflection` (sufficient? hypothesis status, gaps, next actions).
-5. **replan**: if the evidence is not sufficient and budget remains, the gaps are fed back and a new
-   iteration starts.
-6. **synthesize**: structured `Synthesis` (summary, findings with evidence ids, limitations,
-   recommendations).
-7. **verify**: deterministic, no LLM involved (see below). If any number is unsupported, the agent
-   revises once with the exact offending values listed.
-8. **report**: the report MCP server renders the PDF. If the agent made no chart, one is generated
+5. **reflect**: structured `Reflection` (sufficient? hypothesis status, gaps, next actions).
+6. **replan**: if the evidence is not sufficient and budget remains, the gaps and a ledger of queries
+   already run are fed back, and a new iteration starts.
+7. **synthesize**: structured `Synthesis`: summary, findings with evidence ids, limitations,
+   recommendations, and a machine-checkable `answer` (primary entity, dimension, metric, direction,
+   periods, key value, evidence ids).
+8. **verify**: deterministic, no LLM. Two independent checks:
+   [number verification](#evidence-verification) and [task alignment](#task-alignment).
+   - Misaligned: the agent is sent back once to collect the right evidence (**realign**).
+   - Unsupported numbers or remaining misalignment: it revises the answer.
+   - Still misaligned after that: the run ends as `completed_with_issues`, never as a plain success.
+9. **report**: the report MCP server renders the PDF. If the agent made no chart, one is generated
    from the best tabular evidence.
 
 **Reliability guardrails**
@@ -240,6 +264,71 @@ value can be "derived", so the restriction keeps the check honest.
 Each finding ends up `verified`, `partially_verified`, `unverified` or `qualitative`. The run reports a
 **hallucination rate**: unsupported numeric claims ÷ all numeric claims.
 
+## Temporal scoping
+
+[`agent/temporal.py`](backend/databeacon/agent/temporal.py) resolves phrases like "last quarter",
+"this month", "past 6 months", "Q3 2025 vs Q2 2025", "December 2025" or "year over year" against the
+**data's coverage**, not the wall clock:
+
+- The reference point is the latest date in the chosen date column. A calendar period counts as
+  complete only if the data reaches its last day. The tolerance is one sampling interval, so weekly
+  data, or monthly data stored as the first of each month, is handled.
+- If the latest period is partial but barely started (under a third covered), "last quarter" means
+  the last complete quarter, and that assumption is recorded.
+- Every assumption ("data covers X to Y", "Q1 2026 is 11% covered and excluded", "comparison period:
+  Q3 2025") appears in the task contract, the UI and the PDF.
+
+**It asks instead of guessing** (status `needs_clarification`, with options) when:
+- the latest period is partial but substantially covered;
+- several date columns could apply and the question names none;
+- the question has a time phrase but the data has no dates;
+- a requested period is outside the data;
+- a "change" question has no earlier period to compare with.
+
+Answering re-runs the question with `clarification` (e.g. `"Q4 2025"` or
+`"2025-10-01 to 2025-12-31"`). The UI shows one-click options.
+
+## Task alignment
+
+[`agent/alignment.py`](backend/databeacon/agent/alignment.py) checks that the work answers the question
+that was asked, independently of whether its numbers are correct:
+
+| Check | Fails when |
+|---|---|
+| Period | The answer's periods differ from the contract; no cited evidence queried the current period; cited evidence analyses dates outside the requested window; or the text discusses other periods (e.g. "Q2 2025") |
+| Metric | The answer or its cited evidence uses a different metric column |
+| Grouping | The answer is grouped by a different column, or no cited evidence is grouped as requested |
+| Primary conclusion | The answer names no entity; or recomputing the extreme value from the cited evidence (period comparison, group comparison, or one-row-per-group SQL result) gives a different entity; or the summary doesn't state it |
+
+This catches the failure seen on Cloudflare, where Q3 was compared with Q2 instead of Q4 with Q3. All
+the numbers were correct for the wrong period, so number verification alone passed it.
+
+## Token efficiency
+
+Per-stage and per-component token use is recorded for every LLM call, and runs report
+`tokens_by_stage`. Profile a run with:
+
+```bash
+cd backend && python -m evals.token_profile
+```
+
+Changes made after profiling a real 82k-token Cloudflare run, where act calls were 75% of tokens:
+
+- Tool schemas no longer include tools the loop never needs to choose (`profile_dataset`,
+  `list_tables`, `generate_pdf_report`). Descriptions are capped and `title`/`Optional` noise is
+  removed. Result: about 20% less per act call.
+- Tool results sent to the model are tool-aware digests: top contributors, ≤15 rows, float noise
+  rounded. Result: about 64% smaller on the real run's evidence. Full results stay as evidence.
+- Act history is compacted at 9k instead of 14k characters. The two latest results stay verbatim.
+- Plan, reflect and synthesize use a brief system prompt without the tool rules. The profile is never
+  re-sent as evidence.
+- Repeated SQL is blocked modulo whitespace and case. Replans see a ledger of queries already run. The
+  model is told it may batch independent tool calls.
+
+Projected on the real run's trajectory, input tokens drop by about **30%** (≈62k → ≈44k). Fewer turns
+from blocked or batched calls would save more, but that hasn't been measured live yet. Output tokens,
+mostly gpt-oss reasoning in reflect, are unchanged.
+
 ## Security model
 
 - **SQL sandbox** ([`sql_guard.py`](backend/databeacon/sql_guard.py)): one statement only; DuckDB's own
@@ -255,31 +344,42 @@ Each finding ends up `verified`, `partially_verified`, `unverified` or `qualitat
 ## Evaluation framework
 
 [`backend/evals`](backend/evals) runs the real agent end to end on a benchmark of questions about the
-synthetic e-commerce dataset. The data has a known story planted in it: Q4-2025 revenue drops, mostly
-because SMB customers in the West nearly stop ordering, and Electronics discounts jump from about 8% to
-22%. Ground-truth numbers come from gold SQL queries run at evaluation time.
+synthetic e-commerce dataset. The data has a known story planted in it: Q4-2025 revenue drops,
+Enterprise is the segment that fell most, SMB customers in the West nearly stop ordering, and
+Electronics discounts jump from about 8% to 22%. Gold entities and numbers are computed by SQL at
+evaluation time.
 
-| Metric | Definition |
+A case **succeeds only if every check passes**. Each check is scored independently:
+
+| Check | Passes when |
 |---|---|
-| Task success | Run completed, all expected entities named, gold values present in evidence, hallucination ≤ 10% |
-| SQL validity | Share of the agent's `run_sql` calls that executed successfully |
-| SQL gold match | Every gold-query value appears in some successful tool output |
-| Tool selection F1 | Precision against expected + acceptable tools, recall against expected tools |
-| Numerical accuracy | Share of gold values stated in the summary or findings |
-| Hallucination rate | Unsupported numeric claims ÷ numeric claims (from the verifier) |
-| Trajectory | Profiled first, duplicate calls, tool errors, error recovery, replans, revisions |
-| Cost | Latency, LLM calls, input/output tokens, tool calls |
+| Primary conclusion | The structured `answer.primary_entity` is the gold entity and the summary states it. Mentioning the right entity somewhere is not enough. |
+| Period | `answer.current_period` / `previous_period` equal the gold periods |
+| Metric / grouping | `answer.metric_column` / `answer.dimension` equal the gold ones |
+| Numerical evidence | The gold numbers appear in the evidence the answer cites |
+| Alignment | The agent's own task-alignment check passed |
+| Hallucination | ≤ 10% of numeric claims unsupported |
+
+Also reported: SQL validity, tool-selection F1, error recovery, trajectory (replans, realignments,
+revisions, blocked duplicates), latency, tokens by stage, and Cloudflare neurons per case.
+
+**Scorer calibration.** The offline suite includes scripted runs that are wrong on purpose:
+- one investigates the wrong quarter and never corrects itself;
+- one names the wrong segment while still mentioning the right one;
+- one starts on the wrong quarter and must self-correct.
+
+The scorer must fail the first two and pass the third. CI requires 100% calibration.
 
 ```bash
 cd backend
-python -m evals.run                     # live, all cases, configured provider
-python -m evals.run --case return_rate  # a single case
-python -m evals.run --mode scripted     # deterministic offline run (used in CI)
+python -m evals.run --mode scripted --min-calibration 1.0             # offline, incl. calibration (CI)
+python -m evals.run --case revenue_decline_attribution --max-neurons 3500   # one live case, capped
+python -m evals.run --max-neurons 7000                                 # live benchmark, capped
 ```
 
-Results go to `evals/results/latest.json` and `latest.md`, and show up in the **Evaluation** tab.
-CI runs the scripted suite on every push. With `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` set as
-repository secrets, the `live-eval` job also benchmarks the real model on `main`.
+Live results go to `evals/results/latest.json`/`.md`, offline ones to `latest_scripted.*`. Both show up
+in the **Evaluation** tab. Results from the earlier, lenient scorer are kept as
+`legacy_lenient_scorer_*` for history. The `live-eval` CI job only runs when started manually.
 
 ## Observability
 
@@ -304,7 +404,8 @@ Interactive docs at `/docs` when the backend is running.
 | GET | `/api/datasets/{id}/profile` | Full profile |
 | POST | `/api/datasets/{id}/sql` | Read-only SQL console (same sandbox as the agent) |
 | GET | `/api/mcp/catalog` | Discovered MCP tools, resources and prompts |
-| POST | `/api/runs` | Start an analysis `{dataset_id, question}` → `{run_id}` |
+| POST | `/api/runs` | Start an analysis `{dataset_id, question, clarification?}` → `{run_id}` |
+| GET | `/api/usage` | Today's LLM usage and Cloudflare neuron budget |
 | GET | `/api/runs?dataset_id=` | Run history |
 | GET | `/api/runs/{id}` | Run status and full result |
 | GET | `/api/runs/{id}/events` | Live event stream (SSE) |

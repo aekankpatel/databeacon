@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:  # the live (Cloudflare) evaluation only runs when started by hand
 
 jobs:
   backend:
@@ -23,8 +24,8 @@ jobs:
         run: ruff check databeacon evals tests sample_data
       - name: Tests
         run: pytest -q
-      - name: Agent evaluation (scripted, offline)
-        run: python -m evals.run --mode scripted --min-success 1.0 --out /tmp/eval-results
+      - name: Agent evaluation (scripted, offline, incl. scorer calibration)
+        run: python -m evals.run --mode scripted --min-success 1.0 --min-calibration 1.0 --out /tmp/eval-results
       - uses: actions/upload-artifact@v4
         with:
           name: eval-results
@@ -60,8 +61,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   live-eval:
-    # Runs the full benchmark against a real LLM when credentials are configured as repository secrets.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Spends Cloudflare neurons, so it never runs automatically: start it from the Actions tab.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: backend
     defaults:
@@ -79,7 +80,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Live evaluation
         if: env.CLOUDFLARE_API_TOKEN != ''
-        run: python -m evals.run --mode live --out /tmp/eval-results
+        # capped well inside the free tier; the app's daily neuron guard still applies
+        run: python -m evals.run --mode live --max-neurons 7000 --out /tmp/eval-results
       - uses: actions/upload-artifact@v4
         if: env.CLOUDFLARE_API_TOKEN != ''
         with:
