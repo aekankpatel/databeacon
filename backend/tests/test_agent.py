@@ -57,3 +57,24 @@ async def test_budget_stops_agent(registry, dataset, monkeypatch):
     assert run["status"] == "completed"
     assert res["metrics"]["tool_calls"] <= 4  # profile + 2 agent calls + optional auto chart
     assert any(e["name"] == "budget_reached" for e in res["timeline"])
+
+
+async def test_plan_failure_falls_back(registry, dataset):
+    from langchain_core.messages import AIMessage
+
+    from databeacon.agent.testing import EcommerceAnalystPolicy, ScriptedChatModel
+
+    policy = EcommerceAnalystPolicy(hallucinate_first=False)
+
+    def responder(messages, tools_bound):
+        task = str(messages[-2].content) if len(messages) >= 2 else ""
+        if not tools_bound and "Create an investigation plan" in task:
+            return AIMessage('{"id": "H1", "statement": "not a plan"}')  # wrong shape every time
+        return policy(messages, tools_bound)
+
+    manager = RunManager(registry, llm_factory=lambda: ScriptedChatModel(responder=responder))
+    run = await manager.run_sync(dataset.id, "Why did revenue decline last quarter?")
+    assert run["status"] == "completed"
+    names = [e["name"] for e in run["result"]["timeline"]]
+    assert "plan_fallback" in names
+    assert run["result"]["synthesis"]["findings"]

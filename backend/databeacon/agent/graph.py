@@ -203,12 +203,21 @@ class AnalystAgent:
     async def plan(self, state: AgentState) -> AgentState:
         async with self.rec.span("node", "plan") as ev:
             msgs = [self._system(state), HumanMessage(P.PLAN.format(question=state["question"]))]
-            plan = await self._structured("plan", msgs, Plan)
+            try:
+                plan = await self._structured("plan", msgs, Plan)
+            except Exception as exc:  # degrade gracefully: investigate without a detailed plan
+                if type(exc).__name__ == "QuotaExhaustedError":
+                    raise
+                state["errors"].append(f"plan: {exc}")
+                self.rec.log("guardrail", "plan_fallback", status="warning", error=str(exc)[:500])
+                plan = Plan(objective=state["question"],
+                            steps=["Profile relevant columns", "Query the metrics the question asks about",
+                                   "Test differences statistically", "Chart the key result"])
             ev["output"] = plan.model_dump()
         plan_text = json.dumps(plan.model_dump(), indent=1)
         self.rec.publish({"kind": "plan", "plan": plan.model_dump()})
         messages = [self._system(state), HumanMessage(P.EXECUTE.format(question=state["question"], plan=plan_text))]
-        return {"plan": plan.model_dump(), "messages": messages}
+        return {"plan": plan.model_dump(), "messages": messages, "errors": state["errors"]}
 
     async def act(self, state: AgentState) -> AgentState:
         msgs = list(state["messages"])
