@@ -74,6 +74,13 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         return {"status": "ok", "version": __version__, "llm": provider_info(),
                 "mcp_transport": settings.mcp_transport}
 
+    @app.get("/api/usage")
+    async def llm_usage() -> dict[str, Any]:
+        """Today's LLM usage and the Cloudflare free-tier neuron budget."""
+        from ..budget import NeuronBudget
+
+        return NeuronBudget(settings.data_dir / "llm_usage.sqlite").summary()
+
     # -------------------------------------------------------------- datasets
     @app.get("/api/datasets")
     async def list_datasets() -> list[dict[str, Any]]:

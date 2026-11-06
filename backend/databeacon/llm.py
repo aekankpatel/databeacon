@@ -1,12 +1,18 @@
 """LLM provider layer. All providers are reached via their OpenAI-compatible APIs.
 
 Providers (``DATABEACON_LLM_PROVIDER``):
-  * ``cloudflare`` - Cloudflare Workers AI (needs CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)
-  * ``groq``       - Groq (needs GROQ_API_KEY)
-  * ``scripted``   - offline demo: a deterministic policy for the bundled sample dataset (no key needed)
+  * ``cloudflare`` - Cloudflare Workers AI (primary). Needs CLOUDFLARE_ACCOUNT_ID; the API token comes
+                     from CLOUDFLARE_API_TOKEN or is injected by an egress proxy (see below).
+  * ``groq``       - Groq (needs GROQ_API_KEY, or proxy-injected auth)
   * ``openai``     - any OpenAI-compatible server (OPENAI_API_KEY, DATABEACON_LLM_BASE_URL),
                      e.g. a local Ollama / vLLM / LM Studio instance.
-If unset, the first provider with credentials configured is used.
+  * ``scripted``   - offline demo: a deterministic policy for the bundled sample dataset (no key needed)
+
+``DATABEACON_FALLBACK_PROVIDER`` (e.g. ``groq``) is used when the primary fails or the Cloudflare
+free-tier budget is exhausted.
+
+If an egress proxy injects the Authorization header (``DATABEACON_INJECTED_AUTH=1``), no token is read
+or needed: a placeholder is sent and the proxy replaces it.
 """
 
 from __future__ import annotations
@@ -22,11 +28,12 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, ValidationError
 
 DEFAULT_MODELS = {
-    "cloudflare": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "cloudflare": "@cf/openai/gpt-oss-120b",
     "groq": "openai/gpt-oss-120b",
     "openai": "gpt-4o-mini",
     "scripted": "scripted-demo",
 }
+INJECTED_PLACEHOLDER = "injected-by-egress-proxy"
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -35,11 +42,15 @@ class LLMConfigError(RuntimeError):
     pass
 
 
+def _injected() -> bool:
+    return os.environ.get("DATABEACON_INJECTED_AUTH", "").lower() in {"1", "true", "yes"}
+
+
 def detect_provider() -> str:
     explicit = os.environ.get("DATABEACON_LLM_PROVIDER", "").strip().lower()
     if explicit:
         return explicit
-    if os.environ.get("CLOUDFLARE_API_TOKEN"):
+    if os.environ.get("CLOUDFLARE_ACCOUNT_ID"):
         return "cloudflare"
     if os.environ.get("GROQ_API_KEY"):
         return "groq"
@@ -48,35 +59,57 @@ def detect_provider() -> str:
     return "cloudflare"
 
 
-def provider_info() -> dict[str, Any]:
-    p = detect_provider()
-    model = os.environ.get("DATABEACON_MODEL") or DEFAULT_MODELS.get(p, "")
-    configured = {
-        "cloudflare": bool(os.environ.get("CLOUDFLARE_API_TOKEN") and os.environ.get("CLOUDFLARE_ACCOUNT_ID")),
-        "groq": bool(os.environ.get("GROQ_API_KEY")),
+def fallback_provider() -> str | None:
+    fb = os.environ.get("DATABEACON_FALLBACK_PROVIDER", "").strip().lower()
+    return fb if fb and fb != detect_provider() else None
+
+
+def model_for(provider: str) -> str:
+    if provider == detect_provider() and os.environ.get("DATABEACON_MODEL"):
+        return os.environ["DATABEACON_MODEL"]
+    if provider == fallback_provider() and os.environ.get("DATABEACON_FALLBACK_MODEL"):
+        return os.environ["DATABEACON_FALLBACK_MODEL"]
+    return DEFAULT_MODELS.get(provider, "")
+
+
+def is_configured(provider: str) -> bool:
+    return {
+        "cloudflare": bool(os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+                           and (os.environ.get("CLOUDFLARE_API_TOKEN") or _injected())),
+        "groq": bool(os.environ.get("GROQ_API_KEY") or _injected()),
         "openai": bool(os.environ.get("OPENAI_API_KEY") or os.environ.get("DATABEACON_LLM_BASE_URL")),
         "scripted": True,
-    }.get(p, False)
-    return {"provider": p, "model": model, "configured": configured}
+    }.get(provider, False)
 
 
-def build_chat_model(temperature: float = 0.1, timeout: float = 90.0, model: str | None = None) -> BaseChatModel:
+def provider_info() -> dict[str, Any]:
+    p = detect_provider()
+    fb = fallback_provider()
+    return {"provider": p, "model": model_for(p), "configured": is_configured(p),
+            "fallback": {"provider": fb, "model": model_for(fb), "configured": is_configured(fb)} if fb else None}
+
+
+def build_provider_model(provider: str, temperature: float = 0.1, timeout: float = 90.0,
+                         model: str | None = None) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
 
-    provider = detect_provider()
     if provider == "scripted":
         from .agent.testing import scripted_ecommerce_llm
 
         return scripted_ecommerce_llm()
-    model = model or os.environ.get("DATABEACON_MODEL") or DEFAULT_MODELS.get(provider)
+    model = model or model_for(provider)
     if provider == "cloudflare":
-        token, account = os.environ.get("CLOUDFLARE_API_TOKEN"), os.environ.get("CLOUDFLARE_ACCOUNT_ID")
-        if not token or not account:
-            raise LLMConfigError("Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to use Cloudflare Workers AI.")
+        account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+        if not account:
+            raise LLMConfigError("Set CLOUDFLARE_ACCOUNT_ID to use Cloudflare Workers AI.")
+        if not re.fullmatch(r"[0-9a-f]{32}", account):
+            raise LLMConfigError("CLOUDFLARE_ACCOUNT_ID should be a 32-character hex id.")
+        api_key = os.environ.get("CLOUDFLARE_API_TOKEN") or (INJECTED_PLACEHOLDER if _injected() else None)
+        if not api_key:
+            raise LLMConfigError("Set CLOUDFLARE_API_TOKEN (or DATABEACON_INJECTED_AUTH=1 behind an auth proxy).")
         base_url = f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1"
-        api_key = token
     elif provider == "groq":
-        api_key = os.environ.get("GROQ_API_KEY")
+        api_key = os.environ.get("GROQ_API_KEY") or (INJECTED_PLACEHOLDER if _injected() else None)
         if not api_key:
             raise LLMConfigError("Set GROQ_API_KEY to use Groq.")
         base_url = "https://api.groq.com/openai/v1"
@@ -85,8 +118,84 @@ def build_chat_model(temperature: float = 0.1, timeout: float = 90.0, model: str
         base_url = os.environ.get("DATABEACON_LLM_BASE_URL") or None
     else:
         raise LLMConfigError(f"Unknown LLM provider '{provider}'")
+    # Set max_tokens explicitly: Workers AI defaults to 256 output tokens, which a reasoning model can spend
+    # entirely on hidden reasoning, leaving an empty answer (finish_reason=length).
+    extra: dict[str, Any] = {}
+    effort = os.environ.get("DATABEACON_REASONING_EFFORT", "").strip().lower()
+    if effort in {"low", "medium", "high"}:
+        extra["reasoning_effort"] = effort
     return ChatOpenAI(model=model, api_key=api_key, base_url=base_url, temperature=temperature, timeout=timeout,
-                      max_retries=2)
+                      max_retries=1, max_tokens=int(os.environ.get("DATABEACON_MAX_OUTPUT_TOKENS", 4096)), **extra)
+
+
+class ProviderChain:
+    """Ordered list of providers: the first that succeeds serves the call.
+
+    Cloudflare calls are checked against (and recorded in) the daily neuron budget, so the agent never
+    spends past the free tier; once the budget is gone the next provider is used.
+    """
+
+    def __init__(self, entries: list[tuple[str, str, Any]], budget: Any = None, _shared: dict | None = None):
+        self.entries = entries  # (provider, model, chat model)
+        self.budget = budget
+        self.shared = _shared if _shared is not None else {"last": None, "fallbacks": 0, "errors": []}
+        self.model_name = entries[0][1]
+
+    def bind_tools(self, tools: list[dict[str, Any]], **kwargs: Any) -> ProviderChain:
+        return ProviderChain([(p, m, llm.bind_tools(tools, **kwargs)) for p, m, llm in self.entries],
+                             self.budget, self.shared)
+
+    @property
+    def last_served(self) -> dict[str, str] | None:
+        return self.shared["last"]
+
+    async def ainvoke(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
+        last_exc: Exception | None = None
+        for i, (provider, model, llm) in enumerate(self.entries):
+            if provider == "cloudflare" and self.budget is not None and self.budget.remaining() <= 0:
+                last_exc = QuotaExhaustedError(
+                    f"Cloudflare daily neuron budget reached ({self.budget.used_today():.0f}/"
+                    f"{self.budget.daily_limit:.0f}); not calling Cloudflare until 00:00 UTC.")
+                self.shared["errors"].append(str(last_exc))
+                continue
+            try:
+                resp = await ainvoke_with_retry(llm, messages, attempts=4 if i < len(self.entries) - 1 else 6)
+            except Exception as exc:  # noqa: BLE001 - try the next provider
+                last_exc = exc
+                self.shared["errors"].append(f"{provider}: {type(exc).__name__}: {str(exc)[:200]}")
+                continue
+            u = usage_of(resp)
+            if not (u["input_tokens"] or u["output_tokens"]):  # some endpoints omit usage: estimate
+                u = {"input_tokens": sum(len(text_of(m)) for m in messages) // 4,
+                     "output_tokens": len(text_of(resp)) // 4 + 16 * len(resp.tool_calls or [])}
+                resp.usage_metadata = {**u, "total_tokens": sum(u.values())}
+            if self.budget is not None:
+                token_usage = (getattr(resp, "response_metadata", None) or {}).get("token_usage") or {}
+                reported = token_usage.get("neurons") if isinstance(token_usage, dict) else None
+                self.budget.record(provider, model, u["input_tokens"], u["output_tokens"], reported)
+            if i > 0:
+                self.shared["fallbacks"] += 1
+            self.shared["last"] = {"provider": provider, "model": model}
+            return resp
+        assert last_exc is not None
+        raise last_exc
+
+
+def build_chat_model(temperature: float = 0.1, timeout: float = 90.0, model: str | None = None,
+                     budget: Any = None) -> Any:
+    primary = detect_provider()
+    if primary == "scripted":
+        return build_provider_model("scripted")
+    entries = [(primary, model or model_for(primary), build_provider_model(primary, temperature, timeout, model))]
+    fb = fallback_provider()
+    if fb and is_configured(fb):
+        entries.append((fb, model_for(fb), build_provider_model(fb, temperature, timeout)))
+    if budget is None:
+        from .budget import NeuronBudget
+        from .config import get_settings
+
+        budget = NeuronBudget(get_settings().data_dir / "llm_usage.sqlite")
+    return ProviderChain(entries, budget)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -99,7 +208,8 @@ class QuotaExhaustedError(RuntimeError):
 
 def _is_daily_quota(exc: Exception) -> bool:
     msg = str(exc).lower()
-    return "per day" in msg or "(tpd)" in msg or "(rpd)" in msg or "daily" in msg and "limit" in msg
+    return ("per day" in msg or "(tpd)" in msg or "(rpd)" in msg or "neuron" in msg
+            or ("daily" in msg and ("limit" in msg or "allocation" in msg)))
 
 
 def _is_retryable(exc: Exception) -> bool:
@@ -199,6 +309,10 @@ async def invoke_structured(llm: BaseChatModel, messages: list[BaseMessage], sch
         u = usage_of(resp)
         usage = {k: usage[k] + u[k] for k in usage}
         raw = text_of(resp)
+        if not raw.strip() and (resp.response_metadata or {}).get("finish_reason") == "length":
+            last_err = ValueError("output truncated (finish_reason=length); raise DATABEACON_MAX_OUTPUT_TOKENS")
+            msgs = msgs + [HumanMessage("Your previous answer was cut off. Keep reasoning brief and output the JSON.")]
+            continue
         try:
             data = extract_json(raw)
             return schema.model_validate(data), usage

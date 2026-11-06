@@ -99,8 +99,10 @@ class AnalystAgent:
         async with self.rec.span("llm", name, model=getattr(self.llm, "model_name", None)) as ev:
             resp = await ainvoke_with_retry(self.llm_tools if tools else self.llm, messages)
             usage = usage_of(resp)
-            self.rec.add_tokens(usage)
+            self.rec.add_tokens(usage, getattr(self.llm, "last_served", None))
             ev["tokens"] = usage
+            if getattr(self.llm, "last_served", None):
+                ev["served_by"] = self.llm.last_served
             if tools:
                 resp = recover_text_tool_calls(resp, self.tool_names)
                 ev["output"] = {"tool_calls": [{"name": c["name"], "args": c["args"]} for c in resp.tool_calls],
@@ -112,8 +114,10 @@ class AnalystAgent:
     async def _structured(self, name: str, messages: list[BaseMessage], schema):
         async with self.rec.span("llm", name, model=getattr(self.llm, "model_name", None)) as ev:
             obj, usage = await invoke_structured(self.llm, messages, schema)
-            self.rec.add_tokens(usage)
+            self.rec.add_tokens(usage, getattr(self.llm, "last_served", None))
             ev["tokens"] = usage
+            if getattr(self.llm, "last_served", None):
+                ev["served_by"] = self.llm.last_served
             ev["output"] = obj.model_dump()
             return obj
 

@@ -61,6 +61,7 @@ class RunRecorder:
         self._subscribers: list[asyncio.Queue] = []
         self.tokens = {"input_tokens": 0, "output_tokens": 0}
         self.llm_calls = 0
+        self.served_by: dict[str, int] = {}
         self.started = time.perf_counter()
 
     # --------------------------------------------------------------- pub/sub
@@ -80,8 +81,11 @@ class RunRecorder:
             q.put_nowait(message)
 
     # ---------------------------------------------------------------- events
-    def add_tokens(self, usage: dict[str, int]) -> None:
+    def add_tokens(self, usage: dict[str, int], served: dict[str, str] | None = None) -> None:
         self.llm_calls += 1
+        if served:
+            key = f"{served['provider']}:{served['model']}"
+            self.served_by[key] = self.served_by.get(key, 0) + 1
         for k in self.tokens:
             self.tokens[k] += int(usage.get(k, 0))
 
@@ -139,4 +143,5 @@ class RunRecorder:
             "tool_calls": len(tool_events),
             "tool_errors": sum(1 for e in tool_events if e["status"] == "error"),
             "sql_queries": sum(1 for e in tool_events if e["name"] == "run_sql"),
+            "served_by": dict(self.served_by),
         }

@@ -95,14 +95,21 @@ async def main() -> int:
         factory = scripted_ecommerce_llm
     manager = RunManager(registry, settings, llm_factory=factory, max_concurrent=1)
 
+    from databeacon.budget import NeuronBudget
+
+    usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
     scores = []
     incomplete = None
     for case in cases:
         print(f"▶ {case['id']}: {case['question']}", flush=True)
+        neurons_before = usage_db.used_today()
         run = await manager.run_sync(ds.id, case["question"])
+        neurons = round(usage_db.used_today() - neurons_before, 1)
         gold = _gold_values(registry.db_path(ds.id), case["gold_sql"])
         case = _resolve_entities(registry.db_path(ds.id), case)
         score = score_case(case, run, gold)
+        score["cloudflare_neurons"] = neurons
+        score["served_by"] = ((run.get("result") or {}).get("metrics") or {}).get("served_by")
         if score.get("error") and "QuotaExhaustedError" in score["error"]:
             # provider quota, not agent behaviour: stop instead of recording misleading failures
             incomplete = f"stopped at '{case['id']}': LLM provider quota exhausted"
@@ -113,10 +120,12 @@ async def main() -> int:
             print(f"  error: {score['error'][:200]}", flush=True)
         print(f"  expected={case['expected_entities']} status={score['status']} success={score['task_success']} entities={score['entity_recall']} "
               f"gold={score['sql_gold_match']} tool_f1={score['tool_selection']['f1']} "
-              f"halluc={score['hallucination_rate']} latency={score['latency_s']}s tokens={score['total_tokens']}",
+              f"halluc={score['hallucination_rate']} latency={score['latency_s']}s tokens={score['total_tokens']} "
+              f"neurons={neurons} served_by={score['served_by']}",
               flush=True)
 
     summary = aggregate(scores)
+    summary["total_cloudflare_neurons"] = round(sum(s["cloudflare_neurons"] for s in scores), 1)
     info = provider_info()
     meta = {"timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "mode": args.mode,
             "provider": "scripted" if args.mode == "scripted" else info["provider"],
