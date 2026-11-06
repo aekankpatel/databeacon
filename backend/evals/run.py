@@ -96,12 +96,18 @@ async def main() -> int:
     manager = RunManager(registry, settings, llm_factory=factory, max_concurrent=1)
 
     scores = []
+    incomplete = None
     for case in cases:
         print(f"▶ {case['id']}: {case['question']}", flush=True)
         run = await manager.run_sync(ds.id, case["question"])
         gold = _gold_values(registry.db_path(ds.id), case["gold_sql"])
         case = _resolve_entities(registry.db_path(ds.id), case)
         score = score_case(case, run, gold)
+        if score.get("error") and "QuotaExhaustedError" in score["error"]:
+            # provider quota, not agent behaviour: stop instead of recording misleading failures
+            incomplete = f"stopped at '{case['id']}': LLM provider quota exhausted"
+            print(f"  {incomplete}", flush=True)
+            break
         scores.append(score)
         if score.get("error"):
             print(f"  error: {score['error'][:200]}", flush=True)
@@ -119,12 +125,16 @@ async def main() -> int:
                         "max_steps_per_iteration": settings.max_steps_per_iteration}}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
+    meta["incomplete"] = incomplete
     payload = {"meta": meta, "summary": summary, "cases": scores}
     stamp = meta["timestamp"].replace(":", "").replace("-", "")
     (out / f"eval_{args.mode}_{stamp}.json").write_text(json.dumps(payload, indent=2))
+    print(json.dumps(summary, indent=2))
+    if incomplete:
+        print(f"Suite incomplete ({incomplete}); latest.json left unchanged.")
+        return 2
     (out / "latest.json").write_text(json.dumps(payload, indent=2))
     (out / "latest.md").write_text(_markdown(summary, scores, meta))
-    print(json.dumps(summary, indent=2))
     if args.min_success is not None and summary["task_success_rate"] < args.min_success:
         return 1
     return 0
