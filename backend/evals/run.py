@@ -44,7 +44,8 @@ def _resolve_entities(db_path: Path, case: dict) -> dict:
 
 def _markdown(summary: dict, scores: list[dict], meta: dict) -> str:
     lines = [f"# DataBeacon evaluation - {meta['timestamp']}", "",
-             f"Mode: `{meta['mode']}` · Provider: `{meta['provider']}` · Model: `{meta['model']}`", "",
+             f"Mode: `{meta['mode']}` · Provider: `{meta['provider']}` · Model: `{meta['model']}` · "
+             f"Budgets: `{meta.get('budgets')}`", "",
              "## Aggregate", "", "| Metric | Value |", "|---|---|"]
     lines += [f"| {k.replace('_', ' ')} | {v} |" for k, v in summary.items()]
     lines += ["", "## Per case", "",
@@ -113,7 +114,9 @@ async def main() -> int:
     info = provider_info()
     meta = {"timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "mode": args.mode,
             "provider": "scripted" if args.mode == "scripted" else info["provider"],
-            "model": "scripted" if args.mode == "scripted" else info["model"]}
+            "model": "scripted" if args.mode == "scripted" else info["model"],
+            "budgets": {"max_iterations": settings.max_iterations, "max_tool_calls": settings.max_tool_calls,
+                        "max_steps_per_iteration": settings.max_steps_per_iteration}}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     payload = {"meta": meta, "summary": summary, "cases": scores}
