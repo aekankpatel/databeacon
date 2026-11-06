@@ -185,6 +185,21 @@ def build_pdf(path: Path, report: dict[str, Any]) -> dict[str, Any]:
     story.append(_p("Executive summary", st["h1"]))
     story.append(_p(report.get("summary", ""), st["body"]))
 
+    scope = report.get("scope") or {}
+    if scope:
+        story.append(_p("Scope & task alignment", st["h2"]))
+        rows = [[k, v] for k, v in (("Current period", scope.get("current")), ("Comparison period", scope.get("previous")),
+                                    ("Metric", scope.get("metric")), ("Grouping", scope.get("grouping"))) if v]
+        al = scope.get("alignment") or {}
+        if al:
+            rows.append(["Task alignment", (al.get("status") or "").upper()])
+        if rows:
+            story.append(_table(rows, ["Scope", "Value"], col_widths=[5 * cm, 10 * cm]))
+        for a in scope.get("assumptions") or []:
+            story.append(_p(f"Assumption: {a}", st["muted"]))
+        for i in al.get("issues") or []:
+            story.append(_p(f"Alignment issue: {i}", st["muted"]))
+
     metrics = report.get("metrics") or {}
     if metrics:
         mrows = [[k.replace("_", " "), v] for k, v in metrics.items()]

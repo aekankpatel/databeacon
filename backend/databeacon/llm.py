@@ -168,37 +168,61 @@ class ProviderChain:
         self.model_name = entries[0][1]
 
     def bind_tools(self, tools: list[dict[str, Any]], **kwargs: Any) -> ProviderChain:
-        return ProviderChain([(p, m, llm.bind_tools(tools, **kwargs)) for p, m, llm in self.entries],
-                             self.budget, self.shared)
+        bound = ProviderChain([(p, m, llm.bind_tools(tools, **kwargs)) for p, m, llm in self.entries],
+                              self.budget, dict(self.shared))
+        bound.shared = self.shared  # share last-served/fallback state with the unbound chain
+        bound._tool_schema_chars = len(json.dumps(tools, separators=(",", ":"), default=str))
+        return bound
 
     @property
     def last_served(self) -> dict[str, str] | None:
         return self.shared["last"]
 
     async def ainvoke(self, messages: list[BaseMessage], **kwargs: Any) -> AIMessage:
+        from .budget import BudgetUnavailable, worst_case_neurons
+
         last_exc: Exception | None = None
+        max_out = int(os.environ.get("DATABEACON_MAX_OUTPUT_TOKENS", 4096))
+        prompt_chars = sum(len(text_of(m)) for m in messages) + getattr(self, "_tool_schema_chars", 0)
         for i, (provider, model, llm) in enumerate(self.entries):
-            if provider == "cloudflare" and self.budget is not None and self.budget.remaining() <= 0:
-                last_exc = QuotaExhaustedError(
-                    f"Cloudflare daily neuron budget reached ({self.budget.used_today():.0f}/"
-                    f"{self.budget.daily_limit:.0f}); not calling Cloudflare until 00:00 UTC.")
-                self.shared["errors"].append(str(last_exc))
-                continue
+            reservation = None
+            if provider == "cloudflare":
+                if self.budget is None:  # fail closed: never call Cloudflare without accounting
+                    last_exc = QuotaExhaustedError("Cloudflare call refused: no neuron budget configured.")
+                    self.shared["errors"].append(str(last_exc))
+                    continue
+                need = worst_case_neurons(model, prompt_chars, max_out)
+                try:
+                    reservation = self.budget.reserve(need)
+                except BudgetUnavailable as exc:
+                    last_exc = QuotaExhaustedError(f"Cloudflare call refused: {exc}")
+                    self.shared["errors"].append(str(last_exc))
+                    continue
+                if reservation is None:
+                    last_exc = QuotaExhaustedError(
+                        f"Cloudflare daily neuron budget reached ({self.budget.used_today():.0f}/"
+                        f"{self.budget.daily_limit:.0f} used, this call may need up to {need:.0f}); "
+                        "not calling Cloudflare until 00:00 UTC.")
+                    self.shared["errors"].append(str(last_exc))
+                    continue
             try:
                 resp = await ainvoke_with_retry(llm, messages, attempts=4 if i < len(self.entries) - 1 else 6)
             except Exception as exc:  # noqa: BLE001 - try the next provider
+                if self.budget is not None:
+                    self.budget.release(reservation)
                 last_exc = exc
                 self.shared["errors"].append(f"{provider}: {type(exc).__name__}: {str(exc)[:200]}")
                 continue
             u = usage_of(resp)
             if not (u["input_tokens"] or u["output_tokens"]):  # some endpoints omit usage: estimate
-                u = {"input_tokens": sum(len(text_of(m)) for m in messages) // 4,
+                u = {"input_tokens": prompt_chars // 4,
                      "output_tokens": len(text_of(resp)) // 4 + 16 * len(resp.tool_calls or [])}
                 resp.usage_metadata = {**u, "total_tokens": sum(u.values())}
             if self.budget is not None:
                 token_usage = (getattr(resp, "response_metadata", None) or {}).get("token_usage") or {}
                 reported = token_usage.get("neurons") if isinstance(token_usage, dict) else None
                 self.budget.record(provider, model, u["input_tokens"], u["output_tokens"], reported)
+                self.budget.release(reservation)
             if i > 0:
                 self.shared["fallbacks"] += 1
             self.shared["last"] = {"provider": provider, "model": model}
@@ -325,7 +349,9 @@ async def invoke_structured(llm: BaseChatModel, messages: list[BaseMessage], sch
                             retries: int = 2) -> tuple[T, dict[str, int]]:
     """Structured output via JSON-schema prompting + validation + repair retries (portable across providers)."""
     usage = {"input_tokens": 0, "output_tokens": 0}
-    schema_json = json.dumps(schema.model_json_schema())
+    from .mcp_client import _compact_schema
+
+    schema_json = json.dumps(_compact_schema(schema.model_json_schema()), separators=(",", ":"))
     msgs = list(messages) + [HumanMessage(
         f"Respond with ONLY a JSON object (no prose, no code fences) that validates against this JSON schema:\n{schema_json}"
     )]

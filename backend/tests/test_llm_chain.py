@@ -76,3 +76,42 @@ def test_cloudflare_payload_normalisation(monkeypatch):
     assert "name" not in payload["messages"][-1]
     assert payload["max_tokens"] == 4096
     assert model.openai_api_key.get_secret_value() == "injected-by-egress-proxy"
+
+
+def test_reservation_blocks_calls_that_could_exceed_budget(tmp_path):
+    from databeacon.budget import worst_case_neurons
+
+    budget = NeuronBudget(tmp_path / "u.sqlite", daily_limit=500)
+    need = worst_case_neurons("@cf/openai/gpt-oss-120b", 20_000, 4096)  # ~280 output + ~200 input neurons
+    r1 = budget.reserve(need)
+    assert r1 is not None
+    assert budget.reserve(need) is None  # a concurrent second call would overshoot: refused
+    budget.release(r1)
+    assert budget.reserve(need) is not None
+
+
+def test_budget_cannot_exceed_free_allocation_without_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABEACON_CLOUDFLARE_DAILY_NEURONS", "50000")
+    monkeypatch.delenv("DATABEACON_ALLOW_PAID_INFERENCE", raising=False)
+    assert NeuronBudget(tmp_path / "a.sqlite").daily_limit == 10_000
+    monkeypatch.setenv("DATABEACON_ALLOW_PAID_INFERENCE", "1")
+    assert NeuronBudget(tmp_path / "b.sqlite").daily_limit == 50_000
+
+
+async def test_cloudflare_fails_closed(tmp_path):
+    cf = Fake("cf")
+    with pytest.raises(QuotaExhaustedError):  # no budget configured -> never call Cloudflare
+        await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], None).ainvoke([HumanMessage("hi")])
+    budget = NeuronBudget(tmp_path / "u.sqlite")
+    budget.path = tmp_path / "missing_dir" / "u.sqlite"  # ledger unusable
+    with pytest.raises(QuotaExhaustedError):
+        await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], budget).ainvoke([HumanMessage("hi")])
+    assert cf.calls == 0
+
+
+async def test_failed_call_releases_reservation(tmp_path):
+    budget = NeuronBudget(tmp_path / "u.sqlite", daily_limit=9000)
+    chain = ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", Fake(exc=RuntimeError("400 bad")))], budget)
+    with pytest.raises(RuntimeError):
+        await chain.ainvoke([HumanMessage("hi")])
+    assert budget.remaining() == 9000 and budget.used_today() == 0

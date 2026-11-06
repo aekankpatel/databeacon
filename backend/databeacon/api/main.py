@@ -35,6 +35,8 @@ EVALS_DIR = Path(__file__).resolve().parents[2] / "evals" / "results"
 class RunRequest(BaseModel):
     dataset_id: str
     question: str = Field(min_length=5, max_length=2000)
+    clarification: str | None = Field(default=None, max_length=500,
+                                      description="Answer to a clarification request, e.g. 'Q4 2025'")
 
     @field_validator("question")
     @classmethod
@@ -162,7 +164,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/runs", status_code=202)
     async def start_run(body: RunRequest, request: Request) -> dict[str, Any]:
         try:
-            run_id = runs(request).start(body.dataset_id, body.question)
+            run_id = runs(request).start(body.dataset_id, body.question, body.clarification)
         except DatasetError as exc:
             raise HTTPException(404, str(exc)) from exc
         return {"run_id": run_id, "status": "running"}
@@ -225,10 +227,12 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     # ----------------------------------------------------------------- evals
     @app.get("/api/evals/latest")
     async def latest_eval() -> dict[str, Any]:
-        path = EVALS_DIR / "latest.json"
-        if not path.exists():
-            raise HTTPException(404, "no evaluation results yet - run `python -m evals.run`")
-        return json.loads(path.read_text())
+        """Latest live benchmark if one exists, otherwise the latest offline (scripted) evaluation."""
+        for name in ("latest.json", "latest_scripted.json"):
+            path = EVALS_DIR / name
+            if path.exists():
+                return json.loads(path.read_text())
+        raise HTTPException(404, "no evaluation results yet - run `python -m evals.run --mode scripted`")
 
     # ------------------------------------------------------- static frontend
     dist = Path(os.environ.get("DATABEACON_FRONTEND_DIST", Path(__file__).resolve().parents[3] / "frontend" / "dist"))

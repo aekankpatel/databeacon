@@ -15,11 +15,11 @@ def _compact(obj: Any, rows: int) -> Any:
             if k in DROP_KEYS:
                 continue
             if k == "rows" and isinstance(v, list):
-                out[k] = v[:rows]
+                out[k] = [_compact(r, rows) for r in v[:rows]]
                 if len(v) > rows:
                     out["rows_omitted"] = len(v) - rows
             elif k == "segments" and isinstance(v, list):
-                out[k] = v[:rows]
+                out[k] = [_compact(r, rows) for r in v[:rows]]
             elif k == "columns" and isinstance(v, list) and v and isinstance(v[0], dict) and "role" in v[0]:
                 out[k] = [{kk: c.get(kk) for kk in ("name", "type", "role", "missing_pct", "distinct", "stats")}
                           for c in v]
@@ -29,7 +29,12 @@ def _compact(obj: Any, rows: int) -> Any:
     if isinstance(obj, list):
         return [_compact(v, rows) for v in obj[: max(rows, 10)]]
     if isinstance(obj, float):
-        return round(obj, 4)
+        # strip float noise (1082155.9999999993) but keep what an analyst would quote
+        if abs(obj) >= 100:
+            return round(obj, 2)
+        if abs(obj) >= 1:
+            return round(obj, 4)
+        return float(f"{obj:.4g}")
     return obj
 
 
@@ -48,8 +53,11 @@ def digest_view(tool: str, data: Any) -> Any:
         return data
     if tool == "period_comparison":
         keep = ("metric", "dimensions", "previous_period", "current_period", "total_previous", "total_current",
-                "total_delta", "total_pct_change", "top_negative_contributors", "top_positive_contributors")
-        return {k: data.get(k) for k in keep}
+                "total_delta", "total_pct_change")
+        out = {k: data.get(k) for k in keep}
+        out["top_negative_contributors"] = (data.get("top_negative_contributors") or [])[:3]
+        out["top_positive_contributors"] = (data.get("top_positive_contributors") or [])[:3]
+        return out
     if tool == "run_sql":
         return {"columns": data.get("columns"), "rows": (data.get("rows") or [])[:15],
                 "row_count": data.get("row_count")}

@@ -37,14 +37,34 @@ def _today() -> str:
     return datetime.now(UTC).date().isoformat()
 
 
+class BudgetUnavailable(RuntimeError):
+    """The usage ledger cannot be read or written; Cloudflare must not be called (fail closed)."""
+
+
+RESERVATION_TTL_S = 600
+
+
+def worst_case_neurons(model: str, prompt_chars: int, max_output_tokens: int) -> float:
+    """Upper bound for one call: the prompt (~4 chars/token, +25% slack for tool schemas/formatting)
+    plus the full output allowance."""
+    return estimate_neurons(model, int(prompt_chars / 4 * 1.25) + 64, max_output_tokens)
+
+
 class NeuronBudget:
     def __init__(self, path: Path, daily_limit: float | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.daily_limit = float(daily_limit if daily_limit is not None
-                                 else os.environ.get("DATABEACON_CLOUDFLARE_DAILY_NEURONS", 9_000))
+        limit = float(daily_limit if daily_limit is not None
+                      else os.environ.get("DATABEACON_CLOUDFLARE_DAILY_NEURONS", 9_000))
+        allow_paid = os.environ.get("DATABEACON_ALLOW_PAID_INFERENCE", "").lower() in {"1", "true", "yes"}
+        if limit > FREE_DAILY_NEURONS and not allow_paid:
+            limit = float(FREE_DAILY_NEURONS)  # never above the free allocation without an explicit opt-in
+        self.daily_limit = limit
         self._lock = threading.Lock()
         with self._conn() as c:
+            c.execute("""CREATE TABLE IF NOT EXISTS reservations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, neurons REAL NOT NULL,
+                created REAL NOT NULL)""")
             c.execute("""CREATE TABLE IF NOT EXISTS llm_usage (
                 day TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
                 calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
@@ -61,7 +81,47 @@ class NeuronBudget:
         return float(row[0])
 
     def remaining(self) -> float:
-        return max(0.0, self.daily_limit - self.used_today())
+        return max(0.0, self.daily_limit - self.used_today() - self._reserved())
+
+    def _reserved(self, c: sqlite3.Connection | None = None) -> float:
+        import time
+
+        q = "SELECT COALESCE(SUM(neurons), 0) FROM reservations WHERE day=? AND created > ?"
+        args = (_today(), time.time() - RESERVATION_TTL_S)
+        if c is not None:
+            return float(c.execute(q, args).fetchone()[0])
+        with self._conn() as c2:
+            return float(c2.execute(q, args).fetchone()[0])
+
+    def reserve(self, neurons: float) -> int | None:
+        """Atomically reserve a worst-case amount. Returns a reservation id, or None if it would exceed the
+        budget. Raises BudgetUnavailable if the ledger cannot be used (callers must then not call Cloudflare)."""
+        import time
+
+        try:
+            with self._lock:
+                c = self._conn()
+                try:
+                    c.execute("BEGIN IMMEDIATE")
+                    used = float(c.execute("SELECT COALESCE(SUM(neurons), 0) FROM llm_usage WHERE day=? AND "
+                                           "provider='cloudflare'", (_today(),)).fetchone()[0])
+                    if used + self._reserved(c) + neurons > self.daily_limit:
+                        c.execute("ROLLBACK")
+                        return None
+                    cur = c.execute("INSERT INTO reservations (day, neurons, created) VALUES (?, ?, ?)",
+                                    (_today(), float(neurons), time.time()))
+                    c.execute("COMMIT")
+                    return int(cur.lastrowid)
+                finally:
+                    c.close()
+        except sqlite3.Error as exc:
+            raise BudgetUnavailable(f"neuron ledger unavailable: {exc}") from exc
+
+    def release(self, reservation_id: int | None) -> None:
+        if reservation_id is None:
+            return
+        with self._lock, self._conn() as c:
+            c.execute("DELETE FROM reservations WHERE id=?", (reservation_id,))
 
     def record(self, provider: str, model: str, input_tokens: int, output_tokens: int,
                reported_neurons: float | None = None) -> float:

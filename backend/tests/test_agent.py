@@ -27,7 +27,12 @@ async def test_full_agent_run(registry, dataset):
     # error recovery: the injected bad SQL failed and the run still completed
     assert any(e["type"] == "tool" and e["status"] == "error" for e in res["timeline"])
     # the fabricated claim was caught and revised away
-    assert "revise_unsupported_claims" in names
+    assert "revise_answer" in names
+    # scope was resolved from data coverage, and the answer matches the task contract
+    assert "time_scope_resolved" in names and res["spec"]["current"]["label"] == "Q4 2025"
+    assert res["spec"]["metric_column"] == "revenue" and res["spec"]["group_by"] == ["customer_segment"]
+    assert res["alignment"]["status"] == "aligned", res["alignment"]
+    assert res["synthesis"]["answer"]["primary_entity"] == "Enterprise"
     assert res["verification"]["hallucination_rate"] == 0
     assert all(f["verification"]["status"] == "verified" for f in res["synthesis"]["findings"])
     summary = res["synthesis"]["summary"]
@@ -54,7 +59,9 @@ async def test_budget_stops_agent(registry, dataset, monkeypatch):
     manager = RunManager(registry, settings, llm_factory=scripted_ecommerce_llm)
     run = await manager.run_sync(dataset.id, "Why did revenue decline last quarter?")
     res = run["result"]
-    assert run["status"] == "completed"
+    # two tool calls cannot attribute the decline: the run must say so rather than claim success
+    assert run["status"] == "completed_with_issues"
+    assert res["alignment"]["status"] == "misaligned"
     assert res["metrics"]["tool_calls"] <= 4  # profile + 2 agent calls + optional auto chart
     assert any(e["name"] == "budget_reached" for e in res["timeline"])
 
@@ -68,7 +75,7 @@ async def test_plan_failure_falls_back(registry, dataset):
 
     def responder(messages, tools_bound):
         task = str(messages[-2].content) if len(messages) >= 2 else ""
-        if not tools_bound and "Create an investigation plan" in task:
+        if not tools_bound and "Plan the investigation" in task:
             return AIMessage('{"id": "H1", "statement": "not a plan"}')  # wrong shape every time
         return policy(messages, tools_bound)
 

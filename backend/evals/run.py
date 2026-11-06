@@ -1,8 +1,11 @@
 """Run the DataBeacon agent evaluation suite.
 
-    python -m evals.run                    # live LLM (uses configured provider), all cases
-    python -m evals.run --mode scripted    # deterministic offline run (CI)
-    python -m evals.run --case return_rate
+    python -m evals.run --mode scripted                    # deterministic offline run (CI), incl. calibration
+    python -m evals.run --case revenue_decline_attribution --max-neurons 2500   # small live retest
+    python -m evals.run                                    # live, all benchmark cases (configured provider)
+
+Calibration cases are scripted runs that are wrong on purpose (wrong quarter, wrong conclusion); the
+scorer must fail them. They run only in scripted mode.
 """
 
 from __future__ import annotations
@@ -13,48 +16,57 @@ import json
 import os
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# conservative per-case estimate used by --max-neurons before starting a case
+EST_NEURONS_PER_CASE = 3500
 
-def _gold_values(db_path: Path, sql: str) -> list[float]:
+
+def _numbers(db_path: Path, sql: str) -> list[float]:
     from databeacon.sql_guard import execute_readonly
 
-    res = execute_readonly(db_path, sql)
-    out = []
-    for row in res.rows:
+    out: list[float] = []
+    for row in execute_readonly(db_path, sql).rows:
         out += [float(v) for v in row if isinstance(v, (int, float)) and not isinstance(v, bool)]
     return out
 
 
-def _resolve_entities(db_path: Path, case: dict) -> dict:
-    """Expected answers derived from the data itself (one entity group per query)."""
+def resolve_gold(db_path: Path, case: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Gold answers come from SQL over the dataset wherever possible (not hand-written labels)."""
     from databeacon.sql_guard import execute_readonly
 
-    groups = [list(g) for g in case.get("expected_entities", [])]
-    for sql in case.get("expected_entities_sql", []):
-        rows = execute_readonly(db_path, sql).rows
-        if rows:
-            groups.append([str(rows[0][0])])
-    return {**case, "expected_entities": groups}
+    g = dict(case.get("gold") or {})
+    if "ref" in g:
+        g = {**by_id[g.pop("ref")].get("gold", {}), **g}
+    if g.get("entity_sql"):
+        rows = execute_readonly(db_path, g.pop("entity_sql")).rows
+        g["entity"] = str(rows[0][0]) if rows else None
+    g["numbers"] = _numbers(db_path, g.pop("numbers_sql")) if g.get("numbers_sql") else []
+    return g
 
 
 def _markdown(summary: dict, scores: list[dict], meta: dict) -> str:
     lines = [f"# DataBeacon evaluation - {meta['timestamp']}", "",
              f"Mode: `{meta['mode']}` · Provider: `{meta['provider']}` · Model: `{meta['model']}` · "
              f"Budgets: `{meta.get('budgets')}`", "",
+             "A case succeeds only if every check passes: primary conclusion (structured answer), period, metric, "
+             "grouping, gold numbers in cited evidence, task alignment and hallucination <= 10%.", "",
              "## Aggregate", "", "| Metric | Value |", "|---|---|"]
     lines += [f"| {k.replace('_', ' ')} | {v} |" for k, v in summary.items()]
     lines += ["", "## Per case", "",
-              "| Case | Success | Entities | SQL gold | Num. acc. | Tool F1 | Halluc. | Latency (s) | Tokens |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "| Case | Expected | Success | Conclusion | Period | Metric | Grouping | Numbers | Aligned | Halluc. | "
+              "Tokens |", "|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in scores:
-        lines.append(f"| {s['case']} | {'✅' if s['task_success'] else '❌'} | {s['entity_recall']} | "
-                     f"{s['sql_gold_match']} | {s['numerical_accuracy']} | {s['tool_selection']['f1']} | "
-                     f"{s['hallucination_rate']} | {s['latency_s']} | {s['total_tokens']} |")
+        c = s["checks"]
+        exp = "fail" if not s.get("expect_success", True) else "pass"
+        lines.append(f"| {s['case']} | {exp} | {'✅' if s['task_success'] else '❌'} | {c['primary_conclusion']} | "
+                     f"{c['period']} | {c['metric']} | {c['grouping']} | {c['numerical_evidence']} | {c['alignment']} | "
+                     f"{s['hallucination_rate']} | {s['total_tokens']} |")
     return "\n".join(lines) + "\n"
 
 
@@ -65,9 +77,14 @@ async def main() -> int:
     ap.add_argument("--case", action="append", help="only run these case ids")
     ap.add_argument("--out", default=str(ROOT / "evals" / "results"))
     ap.add_argument("--min-success", type=float, default=None, help="exit 1 if task success rate is below this")
+    ap.add_argument("--min-calibration", type=float, default=None,
+                    help="exit 1 if the scorer misjudges any deliberately wrong scripted run")
+    ap.add_argument("--max-neurons", type=float, default=None,
+                    help="live mode: stop before a case if Cloudflare spend could exceed this many neurons")
     args = ap.parse_args()
 
     os.environ.setdefault("DATABEACON_DATA_DIR", tempfile.mkdtemp(prefix="databeacon_eval_"))
+    from databeacon.budget import NeuronBudget
     from databeacon.config import get_settings
     from databeacon.datasets import DatasetRegistry
     from databeacon.llm import provider_info
@@ -77,74 +94,83 @@ async def main() -> int:
     from .metrics import aggregate, score_case
 
     settings = get_settings()
-    cases = json.loads(Path(args.cases).read_text())
+    all_cases = json.loads(Path(args.cases).read_text())
+    by_id = {c["id"]: c for c in all_cases}
+    cases = all_cases
     if args.case:
         cases = [c for c in cases if c["id"] in args.case]
     if args.mode == "scripted":
-        cases = [c for c in cases if c.get("scripted")]
+        cases = [c for c in cases if "scripted" in c]
+    else:
+        cases = [c for c in cases if not c.get("calibration")]
 
     csv = Path(tempfile.mkdtemp()) / "ecommerce_orders.csv"
     generate().to_csv(csv, index=False)
     registry = DatasetRegistry(settings.datasets_dir)
     ds = registry.ingest_file(csv, name="E-commerce orders")
-
-    factory = None
-    if args.mode == "scripted":
-        from databeacon.agent.testing import scripted_ecommerce_llm
-
-        factory = scripted_ecommerce_llm
-    manager = RunManager(registry, settings, llm_factory=factory, max_concurrent=1)
-
-    from databeacon.budget import NeuronBudget
-
     usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+
     scores = []
     incomplete = None
+    spent = 0.0
     for case in cases:
+        if args.mode == "live" and args.max_neurons is not None and spent + EST_NEURONS_PER_CASE > args.max_neurons:
+            incomplete = f"stopped before '{case['id']}': --max-neurons {args.max_neurons:.0f} would be exceeded"
+            print(f"  {incomplete}", flush=True)
+            break
+        factory = None
+        if args.mode == "scripted":
+            from databeacon.agent.testing import scripted_ecommerce_llm
+
+            kw = case.get("scripted") or {}
+            factory = lambda kw=kw: scripted_ecommerce_llm(**kw)  # noqa: E731
+        manager = RunManager(registry, settings, llm_factory=factory, max_concurrent=1)
         print(f"▶ {case['id']}: {case['question']}", flush=True)
         neurons_before = usage_db.used_today()
         run = await manager.run_sync(ds.id, case["question"])
         neurons = round(usage_db.used_today() - neurons_before, 1)
-        gold = _gold_values(registry.db_path(ds.id), case["gold_sql"])
-        case = _resolve_entities(registry.db_path(ds.id), case)
+        spent += neurons
+        gold = resolve_gold(registry.db_path(ds.id), case, by_id)
         score = score_case(case, run, gold)
         score["cloudflare_neurons"] = neurons
         score["served_by"] = ((run.get("result") or {}).get("metrics") or {}).get("served_by")
         if score.get("error") and "QuotaExhaustedError" in score["error"]:
-            # provider quota, not agent behaviour: stop instead of recording misleading failures
             incomplete = f"stopped at '{case['id']}': LLM provider quota exhausted"
             print(f"  {incomplete}", flush=True)
             break
         scores.append(score)
         if score.get("error"):
             print(f"  error: {score['error'][:200]}", flush=True)
-        print(f"  expected={case['expected_entities']} status={score['status']} success={score['task_success']} entities={score['entity_recall']} "
-              f"gold={score['sql_gold_match']} tool_f1={score['tool_selection']['f1']} "
-              f"halluc={score['hallucination_rate']} latency={score['latency_s']}s tokens={score['total_tokens']} "
-              f"neurons={neurons} served_by={score['served_by']}",
-              flush=True)
+        verdict = "ok" if score["task_success"] == score["expect_success"] else "SCORER MISJUDGED"
+        print(f"  success={score['task_success']} (expected {score['expect_success']}: {verdict}) "
+              f"checks={score['checks']} tokens={score['total_tokens']} neurons={neurons}", flush=True)
+        if score["alignment_issues"]:
+            print(f"  alignment: {score['alignment_issues'][:3]}", flush=True)
 
     summary = aggregate(scores)
     summary["total_cloudflare_neurons"] = round(sum(s["cloudflare_neurons"] for s in scores), 1)
     info = provider_info()
-    meta = {"timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"), "mode": args.mode,
+    meta = {"timestamp": datetime.now(UTC).isoformat(timespec="seconds"), "mode": args.mode,
             "provider": "scripted" if args.mode == "scripted" else info["provider"],
             "model": "scripted" if args.mode == "scripted" else info["model"],
             "budgets": {"max_iterations": settings.max_iterations, "max_tool_calls": settings.max_tool_calls,
-                        "max_steps_per_iteration": settings.max_steps_per_iteration}}
+                        "max_steps_per_iteration": settings.max_steps_per_iteration},
+            "incomplete": incomplete}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    meta["incomplete"] = incomplete
     payload = {"meta": meta, "summary": summary, "cases": scores}
     stamp = meta["timestamp"].replace(":", "").replace("-", "")
     (out / f"eval_{args.mode}_{stamp}.json").write_text(json.dumps(payload, indent=2))
     print(json.dumps(summary, indent=2))
     if incomplete:
-        print(f"Suite incomplete ({incomplete}); latest.json left unchanged.")
+        print(f"Suite incomplete ({incomplete}); latest results left unchanged.")
         return 2
-    (out / "latest.json").write_text(json.dumps(payload, indent=2))
-    (out / "latest.md").write_text(_markdown(summary, scores, meta))
+    name = "latest" if args.mode == "live" else "latest_scripted"
+    (out / f"{name}.json").write_text(json.dumps(payload, indent=2))
+    (out / f"{name}.md").write_text(_markdown(summary, scores, meta))
     if args.min_success is not None and summary["task_success_rate"] < args.min_success:
+        return 1
+    if args.min_calibration is not None and summary["scorer_calibration"] < args.min_calibration:
         return 1
     return 0
 

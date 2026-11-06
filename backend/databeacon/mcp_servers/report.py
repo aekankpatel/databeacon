@@ -56,13 +56,15 @@ def build_report_server(registry: DatasetRegistry | None = None) -> MCPServer:
                                   evidence: list[dict[str, Any]] | None = None,
                                   limitations: list[str] | None = None,
                                   timeline: list[dict[str, Any]] | None = None,
-                                  metrics: dict[str, Any] | None = None) -> dict[str, Any]:
+                                  metrics: dict[str, Any] | None = None,
+                                  scope: dict[str, Any] | None = None) -> dict[str, Any]:
         if not re.fullmatch(r"[0-9a-zA-Z_-]{1,64}", run_id):
             raise ValueError("invalid run_id")
         path = settings.reports_dir / f"{run_id}.pdf"
         payload = {"title": title, "question": question, "dataset": dataset, "summary": summary,
                    "findings": findings or [], "charts": charts or [], "evidence": evidence or [],
-                   "limitations": limitations or [], "timeline": timeline or [], "metrics": metrics or {}}
+                   "limitations": limitations or [], "timeline": timeline or [], "metrics": metrics or {},
+                   "scope": scope or {}}
         return await in_thread(build_pdf, path, payload)
 
     @mcp.resource("reports://list", description="Generated PDF reports", mime_type="application/json")

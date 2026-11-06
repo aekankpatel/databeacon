@@ -101,22 +101,23 @@ class RunManager:
         self.tasks: dict[str, asyncio.Task] = {}
         self._sem = asyncio.Semaphore(max_concurrent)
 
-    def start(self, dataset_id: str, question: str) -> str:
+    def start(self, dataset_id: str, question: str, clarification: str | None = None) -> str:
         ds = self.registry.get(dataset_id)  # raises if missing
         run_id = uuid.uuid4().hex[:12]
         self.store.create(run_id, dataset_id, question)
         rec = RunRecorder(run_id)
         self.recorders[run_id] = rec
-        self.tasks[run_id] = asyncio.create_task(self._execute(run_id, ds.id, ds.name, question, rec))
+        self.tasks[run_id] = asyncio.create_task(self._execute(run_id, ds.id, ds.name, question, rec, clarification))
         return run_id
 
-    async def run_sync(self, dataset_id: str, question: str) -> dict[str, Any]:
+    async def run_sync(self, dataset_id: str, question: str, clarification: str | None = None) -> dict[str, Any]:
         """Start a run and wait for it (used by the evaluation harness)."""
-        run_id = self.start(dataset_id, question)
+        run_id = self.start(dataset_id, question, clarification)
         await self.tasks[run_id]
         return self.get(run_id)
 
-    async def _execute(self, run_id: str, dataset_id: str, dataset_name: str, question: str, rec: RunRecorder) -> None:
+    async def _execute(self, run_id: str, dataset_id: str, dataset_name: str, question: str, rec: RunRecorder,
+                       clarification: str | None = None) -> None:
         status, result = "failed", {}
         state: dict[str, Any] = {}
         async with self._sem:
@@ -126,8 +127,15 @@ class RunManager:
                 async with MCPToolHub(self.registry) as hub:
                     agent = AnalystAgent(llm, hub, rec, self.s)
                     state = await agent.run({"run_id": run_id, "dataset_id": dataset_id, "dataset_name": dataset_name,
-                                             "question": question})
-                status = "completed" if state.get("report", {}).get("ok") else "completed_with_errors"
+                                             "question": question, "clarification": clarification})
+                if state.get("needs_clarification"):
+                    status = "needs_clarification"
+                elif (state.get("alignment") or {}).get("status") == "misaligned":
+                    status = "completed_with_issues"  # answered something other than what was asked
+                elif state.get("report", {}).get("ok"):
+                    status = "completed"
+                else:
+                    status = "completed_with_errors"
             except Exception as exc:  # noqa: BLE001
                 while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
                     exc = exc.exceptions[0]  # surface the real cause, not the task-group wrapper
@@ -148,6 +156,8 @@ class RunManager:
             "timeline": rec.events, "metrics": rec.metrics(), "report": state.get("report"),
             "errors": state.get("errors", []), "stop_reason": state.get("stop_reason"),
             "iterations": state.get("iteration"), "profile": state.get("profile"),
+            "temporal": state.get("temporal"), "spec": state.get("spec"), "alignment": state.get("alignment"),
+            "needs_clarification": state.get("needs_clarification"),
         }
 
     def get(self, run_id: str) -> dict[str, Any] | None:

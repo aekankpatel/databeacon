@@ -1,0 +1,447 @@
+{
+  "meta": {
+    "timestamp": "2026-11-06T07:06:59+00:00",
+    "mode": "scripted",
+    "provider": "scripted",
+    "model": "scripted",
+    "budgets": {
+      "max_iterations": 3,
+      "max_tool_calls": 24,
+      "max_steps_per_iteration": 8
+    },
+    "incomplete": null
+  },
+  "summary": {
+    "cases": 2,
+    "task_success_rate": 1.0,
+    "primary_conclusion_rate": 1.0,
+    "period_correct_rate": 1.0,
+    "metric_correct_rate": 1.0,
+    "grouping_correct_rate": 1.0,
+    "numerical_evidence_rate": 1.0,
+    "alignment_rate": 1.0,
+    "sql_validity": 0.584,
+    "tool_selection_f1": 0.889,
+    "hallucination_rate": 0.0,
+    "avg_latency_s": 1.005,
+    "avg_total_tokens": 25755.0,
+    "avg_tool_calls": 8.5,
+    "error_recovery_rate": 1.0,
+    "scorer_calibration": 1.0,
+    "total_cloudflare_neurons": 0.0
+  },
+  "cases": [
+    {
+      "case": "revenue_decline_attribution",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 0.5,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.889
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "5/5",
+      "latency_s": 1.33,
+      "total_tokens": 20271,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 933,
+          "output_tokens": 197
+        },
+        "act": {
+          "calls": 8,
+          "input_tokens": 11024,
+          "output_tokens": 172
+        },
+        "reflect": {
+          "calls": 2,
+          "input_tokens": 2908,
+          "output_tokens": 144
+        },
+        "synthesize": {
+          "calls": 2,
+          "input_tokens": 4018,
+          "output_tokens": 875
+        }
+      },
+      "llm_calls": 13,
+      "tool_calls": 7,
+      "iterations": 2,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 1,
+        "errors_recovered": 1,
+        "replans": 1,
+        "realignments": 0,
+        "revisions": 1
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "run_sql",
+        "period_comparison",
+        "period_comparison",
+        "create_chart",
+        "compare_groups"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 0.0,
+      "served_by": {}
+    },
+    {
+      "case": "calibration_wrong_quarter",
+      "status": "completed_with_issues",
+      "task_success": false,
+      "checks": {
+        "completed": "pass",
+        "alignment": "fail",
+        "primary_conclusion": "fail",
+        "period": "fail",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "fail",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "SMB",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ],
+        "previous_period": [
+          "2025-04-01",
+          "2025-07-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [
+        "answer periods ['2025-07-01', '2025-10-01']/['2025-04-01', '2025-07-01'] differ from the requested Q4 2025 ['2025-10-01', '2026-01-01'] vs Q3 2025",
+        "answer text discusses periods outside the request: Q2 2025"
+      ],
+      "sql_validity": 0.5,
+      "numbers_stated": 0.5,
+      "tool_selection": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.889
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "5/5",
+      "latency_s": 0.59,
+      "total_tokens": 29437,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 933,
+          "output_tokens": 197
+        },
+        "act": {
+          "calls": 12,
+          "input_tokens": 18633,
+          "output_tokens": 264
+        },
+        "reflect": {
+          "calls": 3,
+          "input_tokens": 4423,
+          "output_tokens": 201
+        },
+        "synthesize": {
+          "calls": 2,
+          "input_tokens": 3926,
+          "output_tokens": 860
+        }
+      },
+      "llm_calls": 18,
+      "tool_calls": 7,
+      "iterations": 3,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 3,
+        "tool_errors": 1,
+        "errors_recovered": 1,
+        "replans": 1,
+        "realignments": 1,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "run_sql",
+        "period_comparison",
+        "period_comparison",
+        "create_chart",
+        "compare_groups"
+      ],
+      "expect_success": false,
+      "cloudflare_neurons": 0.0,
+      "served_by": {}
+    },
+    {
+      "case": "calibration_wrong_conclusion",
+      "status": "completed_with_issues",
+      "task_success": false,
+      "checks": {
+        "completed": "pass",
+        "alignment": "fail",
+        "primary_conclusion": "fail",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Consumer",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [
+        "primary conclusion 'Consumer' contradicts E3 (largest decline), which points to 'Enterprise'"
+      ],
+      "sql_validity": 0.5,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.889
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "5/5",
+      "latency_s": 0.75,
+      "total_tokens": 29715,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 932,
+          "output_tokens": 197
+        },
+        "act": {
+          "calls": 12,
+          "input_tokens": 18743,
+          "output_tokens": 264
+        },
+        "reflect": {
+          "calls": 3,
+          "input_tokens": 4463,
+          "output_tokens": 201
+        },
+        "synthesize": {
+          "calls": 2,
+          "input_tokens": 4042,
+          "output_tokens": 873
+        }
+      },
+      "llm_calls": 18,
+      "tool_calls": 7,
+      "iterations": 3,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 3,
+        "tool_errors": 1,
+        "errors_recovered": 1,
+        "replans": 1,
+        "realignments": 1,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "run_sql",
+        "period_comparison",
+        "period_comparison",
+        "create_chart",
+        "compare_groups"
+      ],
+      "expect_success": false,
+      "cloudflare_neurons": 0.0,
+      "served_by": {}
+    },
+    {
+      "case": "calibration_self_corrects",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 0.667,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 0.8,
+        "recall": 1.0,
+        "f1": 0.889
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "5/5",
+      "latency_s": 0.68,
+      "total_tokens": 31239,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 932,
+          "output_tokens": 197
+        },
+        "act": {
+          "calls": 12,
+          "input_tokens": 19380,
+          "output_tokens": 264
+        },
+        "reflect": {
+          "calls": 3,
+          "input_tokens": 4917,
+          "output_tokens": 201
+        },
+        "synthesize": {
+          "calls": 2,
+          "input_tokens": 4481,
+          "output_tokens": 867
+        }
+      },
+      "llm_calls": 18,
+      "tool_calls": 10,
+      "iterations": 3,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 1,
+        "errors_recovered": 1,
+        "replans": 1,
+        "realignments": 1,
+        "revisions": 0
+      },
+      "tools_used": [
+        "profile_dataset",
+        "run_sql",
+        "run_sql",
+        "period_comparison",
+        "period_comparison",
+        "create_chart",
+        "compare_groups",
+        "run_sql",
+        "period_comparison",
+        "period_comparison"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 0.0,
+      "served_by": {}
+    }
+  ]
+}

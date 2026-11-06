@@ -3,7 +3,6 @@
     "id": "revenue_decline_attribution",
     "question": "Why did our revenue decline last quarter, and which customer segments contributed most?",
     "expected_tools": [
-      "profile_dataset",
       "run_sql",
       "period_comparison",
       "create_chart"
@@ -14,20 +13,93 @@
       "descriptive_statistics",
       "column_values",
       "detect_anomalies",
-      "correlation_analysis"
+      "correlation_analysis",
+      "sample_rows"
     ],
-    "gold_sql": "SELECT ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-07-01' AND order_date < '2025-10-01'), 2) AS q3, ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-10-01'), 2) AS q4 FROM ecommerce_orders",
-    "expected_entities": [],
-    "scripted": true,
-    "expected_entities_sql": [
-      "SELECT customer_segment FROM ecommerce_orders WHERE order_date >= '2025-07-01' GROUP BY 1 ORDER BY SUM(revenue) FILTER (WHERE order_date >= '2025-10-01') - SUM(revenue) FILTER (WHERE order_date < '2025-10-01') LIMIT 1"
-    ]
+    "gold": {
+      "entity_sql": "SELECT customer_segment FROM ecommerce_orders WHERE order_date >= '2025-07-01' AND order_date < '2026-01-01' GROUP BY 1 ORDER BY SUM(revenue) FILTER (WHERE order_date >= '2025-10-01') - SUM(revenue) FILTER (WHERE order_date < '2025-10-01') LIMIT 1",
+      "dimension": "customer_segment",
+      "metric_column": "revenue",
+      "current_period": [
+        "2025-10-01",
+        "2026-01-01"
+      ],
+      "previous_period": [
+        "2025-07-01",
+        "2025-10-01"
+      ],
+      "numbers_sql": "SELECT ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-07-01' AND order_date < '2025-10-01'), 2) AS q3, ROUND(SUM(revenue) FILTER (WHERE order_date >= '2025-10-01' AND order_date < '2026-01-01'), 2) AS q4 FROM ecommerce_orders"
+    },
+    "scripted": {}
+  },
+  {
+    "id": "calibration_wrong_quarter",
+    "question": "Why did our revenue decline last quarter, and which customer segments contributed most?",
+    "note": "Deliberately investigates Q3 vs Q2 and never corrects itself; the scorer must fail it.",
+    "expected_tools": [
+      "run_sql",
+      "period_comparison"
+    ],
+    "acceptable_tools": [
+      "create_chart",
+      "compare_groups"
+    ],
+    "gold": {
+      "ref": "revenue_decline_attribution"
+    },
+    "scripted": {
+      "wrong_quarter": true,
+      "stubborn": true
+    },
+    "expect_success": false,
+    "calibration": true
+  },
+  {
+    "id": "calibration_wrong_conclusion",
+    "question": "Why did our revenue decline last quarter, and which customer segments contributed most?",
+    "note": "Names the wrong segment as the primary conclusion while still mentioning the right one; the scorer must fail it.",
+    "expected_tools": [
+      "run_sql",
+      "period_comparison"
+    ],
+    "acceptable_tools": [
+      "create_chart",
+      "compare_groups"
+    ],
+    "gold": {
+      "ref": "revenue_decline_attribution"
+    },
+    "scripted": {
+      "wrong_conclusion": true
+    },
+    "expect_success": false,
+    "calibration": true
+  },
+  {
+    "id": "calibration_self_corrects",
+    "question": "Why did our revenue decline last quarter, and which customer segments contributed most?",
+    "note": "Starts on the wrong quarter; the alignment check must send it back and the corrected run must pass.",
+    "expected_tools": [
+      "run_sql",
+      "period_comparison"
+    ],
+    "acceptable_tools": [
+      "create_chart",
+      "compare_groups"
+    ],
+    "gold": {
+      "ref": "revenue_decline_attribution"
+    },
+    "scripted": {
+      "wrong_quarter": true
+    },
+    "expect_success": true,
+    "calibration": true
   },
   {
     "id": "discount_shift",
     "question": "Which product category saw the largest increase in average discount in Q4 2025 compared with Q3 2025?",
     "expected_tools": [
-      "profile_dataset",
       "run_sql"
     ],
     "acceptable_tools": [
@@ -37,17 +109,25 @@
       "descriptive_statistics",
       "column_values"
     ],
-    "gold_sql": "SELECT ROUND(AVG(discount_pct) FILTER (WHERE order_date >= '2025-10-01'), 2) AS q4_discount FROM ecommerce_orders WHERE product_category = 'Electronics'",
-    "expected_entities": [],
-    "expected_entities_sql": [
-      "SELECT product_category FROM ecommerce_orders WHERE order_date >= '2025-07-01' GROUP BY 1 ORDER BY AVG(discount_pct) FILTER (WHERE order_date >= '2025-10-01') - AVG(discount_pct) FILTER (WHERE order_date < '2025-10-01') DESC LIMIT 1"
-    ]
+    "gold": {
+      "entity_sql": "SELECT product_category FROM ecommerce_orders WHERE order_date >= '2025-07-01' AND order_date < '2026-01-01' GROUP BY 1 ORDER BY AVG(discount_pct) FILTER (WHERE order_date >= '2025-10-01') - AVG(discount_pct) FILTER (WHERE order_date < '2025-10-01') DESC LIMIT 1",
+      "dimension": "product_category",
+      "metric_column": "discount_pct",
+      "current_period": [
+        "2025-10-01",
+        "2026-01-01"
+      ],
+      "previous_period": [
+        "2025-07-01",
+        "2025-10-01"
+      ],
+      "numbers_sql": "SELECT ROUND(AVG(discount_pct), 2) FROM ecommerce_orders WHERE product_category = 'Electronics' AND order_date >= '2025-10-01' AND order_date < '2026-01-01'"
+    }
   },
   {
     "id": "shipping_by_region",
     "question": "Which region has the slowest shipping times, and is the difference between regions statistically significant?",
     "expected_tools": [
-      "profile_dataset",
       "compare_groups"
     ],
     "acceptable_tools": [
@@ -56,21 +136,17 @@
       "descriptive_statistics",
       "column_values"
     ],
-    "gold_sql": "SELECT ROUND(AVG(days_to_ship), 2) AS west_avg FROM ecommerce_orders WHERE region = 'West'",
-    "expected_entities": [
-      [
-        "significant"
-      ]
-    ],
-    "expected_entities_sql": [
-      "SELECT region FROM ecommerce_orders GROUP BY 1 ORDER BY AVG(days_to_ship) DESC LIMIT 1"
-    ]
+    "gold": {
+      "entity_sql": "SELECT region FROM ecommerce_orders GROUP BY 1 ORDER BY AVG(days_to_ship) DESC LIMIT 1",
+      "dimension": "region",
+      "metric_column": "days_to_ship",
+      "numbers_sql": "SELECT ROUND(AVG(days_to_ship), 2) FROM ecommerce_orders WHERE region = 'West'"
+    }
   },
   {
     "id": "return_rate",
     "question": "Which product category has the highest return rate?",
     "expected_tools": [
-      "profile_dataset",
       "run_sql"
     ],
     "acceptable_tools": [
@@ -79,17 +155,18 @@
       "compare_groups",
       "column_values"
     ],
-    "gold_sql": "SELECT ROUND(100.0 * AVG(CASE WHEN is_returned THEN 1 ELSE 0 END), 1) AS apparel_return_pct FROM ecommerce_orders WHERE product_category = 'Apparel'",
-    "expected_entities": [],
-    "expected_entities_sql": [
-      "SELECT product_category FROM ecommerce_orders GROUP BY 1 ORDER BY AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) DESC LIMIT 1"
-    ]
+    "gold": {
+      "entity_sql": "SELECT product_category FROM ecommerce_orders GROUP BY 1 ORDER BY AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) DESC LIMIT 1",
+      "dimension": "product_category",
+      "metric_column": "is_returned",
+      "numbers_sql": "SELECT ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END), 3) FROM ecommerce_orders WHERE product_category = 'Apparel'"
+    }
   },
   {
     "id": "revenue_trend",
     "question": "Is monthly revenue trending up or down, and when did the most significant shift happen?",
+    "note": "Gold change point is the month where the planted Q4-2025 drop begins.",
     "expected_tools": [
-      "profile_dataset",
       "trend_analysis"
     ],
     "acceptable_tools": [
@@ -97,33 +174,25 @@
       "create_chart",
       "detect_anomalies"
     ],
-    "gold_sql": "SELECT ROUND(SUM(revenue), 2) AS dec_2025 FROM ecommerce_orders WHERE order_date >= '2025-12-01'",
-    "expected_entities": [
-      [
-        "2025",
-        "October",
-        "Oct",
-        "Q4"
-      ]
-    ]
+    "gold": {
+      "entity": "2025-10-01",
+      "metric_column": "revenue",
+      "numbers_sql": "SELECT ROUND(SUM(revenue), 2) FROM ecommerce_orders WHERE order_date >= '2025-12-01'"
+    }
   },
   {
     "id": "data_quality",
     "question": "Are there data quality problems in this dataset, such as missing values or outliers?",
-    "expected_tools": [
-      "profile_dataset"
-    ],
+    "expected_tools": [],
     "acceptable_tools": [
       "run_sql",
       "detect_anomalies",
       "descriptive_statistics",
       "column_values"
     ],
-    "gold_sql": "SELECT COUNT(*) - COUNT(days_to_ship) AS missing_days_to_ship FROM ecommerce_orders",
-    "expected_entities": [
-      [
-        "days_to_ship"
-      ]
-    ]
+    "gold": {
+      "entity": "days_to_ship",
+      "numbers_sql": "SELECT COUNT(*) - COUNT(days_to_ship) FROM ecommerce_orders"
+    }
   }
 ]

@@ -29,7 +29,7 @@ class Settings:
     # SQL sandbox limits
     sql_timeout_s: float = field(default_factory=lambda: float(_env("SQL_TIMEOUT_S", "15")))
     sql_max_rows: int = field(default_factory=lambda: int(_env("SQL_MAX_ROWS", "5000")))
-    llm_result_rows: int = field(default_factory=lambda: int(_env("LLM_RESULT_ROWS", "25")))
+    llm_result_rows: int = field(default_factory=lambda: int(_env("LLM_RESULT_ROWS", "15")))
 
     # Uploads
     max_upload_mb: int = field(default_factory=lambda: int(_env("MAX_UPLOAD_MB", "200")))

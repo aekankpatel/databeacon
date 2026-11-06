@@ -1,3 +1,5 @@
+> **Legacy:** scored with the earlier, lenient scorer (entity mentioned anywhere counted as success). Superseded; kept for history.
+
 # DataBeacon evaluation - 2026-11-06T05:34:38+00:00
 
 Mode: `live` · Provider: `groq` · Model: `openai/gpt-oss-20b` · Budgets: `{'max_iterations': 2, 'max_tool_calls': 24, 'max_steps_per_iteration': 6}`

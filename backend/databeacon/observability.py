@@ -62,6 +62,7 @@ class RunRecorder:
         self.tokens = {"input_tokens": 0, "output_tokens": 0}
         self.llm_calls = 0
         self.served_by: dict[str, int] = {}
+        self.by_stage: dict[str, dict[str, int]] = {}
         self.started = time.perf_counter()
 
     # --------------------------------------------------------------- pub/sub
@@ -81,8 +82,12 @@ class RunRecorder:
             q.put_nowait(message)
 
     # ---------------------------------------------------------------- events
-    def add_tokens(self, usage: dict[str, int], served: dict[str, str] | None = None) -> None:
+    def add_tokens(self, usage: dict[str, int], served: dict[str, str] | None = None, stage: str = "other") -> None:
         self.llm_calls += 1
+        st = self.by_stage.setdefault(stage, {"calls": 0, "input_tokens": 0, "output_tokens": 0})
+        st["calls"] += 1
+        st["input_tokens"] += int(usage.get("input_tokens", 0))
+        st["output_tokens"] += int(usage.get("output_tokens", 0))
         if served:
             key = f"{served['provider']}:{served['model']}"
             self.served_by[key] = self.served_by.get(key, 0) + 1
@@ -144,4 +149,6 @@ class RunRecorder:
             "tool_errors": sum(1 for e in tool_events if e["status"] == "error"),
             "sql_queries": sum(1 for e in tool_events if e["name"] == "run_sql"),
             "served_by": dict(self.served_by),
+            "tokens_by_stage": {k: dict(v) for k, v in self.by_stage.items()},
+            "duplicate_calls_blocked": sum(1 for e in self.events if e["name"] == "duplicate_call_blocked"),
         }

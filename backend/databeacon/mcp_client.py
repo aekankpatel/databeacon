@@ -28,6 +28,47 @@ SERVER_MODULES = {
 
 # Arguments filled in by the client from run context and hidden from the LLM.
 INJECTED_ARGS = ("dataset_id",)
+# Tools the agent loop never needs to choose: the profile is computed up front and put in the prompt,
+# and the PDF is rendered by the report node.
+AGENT_EXCLUDED_TOOLS = ("profile_dataset", "list_tables", "generate_pdf_report")
+MAX_TOOL_DESCRIPTION = 240
+
+
+def _compact_description(text: str, limit: int = MAX_TOOL_DESCRIPTION) -> str:
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("; "))
+    return (cut[: end + 1] if end > limit // 2 else cut.rstrip() + "…").strip()
+
+
+def _compact_schema(node: Any, _in_properties: bool = False) -> Any:
+    """Drop schema metadata titles and collapse Optional[...] (anyOf with null): same contract, fewer tokens.
+
+    Keys inside a ``properties`` mapping are parameter names and are always kept (a parameter may be
+    called ``title``)."""
+    if isinstance(node, dict):
+        if _in_properties:
+            return {k: _compact_schema(v) for k, v in node.items()}
+        node = {k: _compact_schema(v, _in_properties=(k == "properties")) for k, v in node.items()
+                if not (k == "title" and isinstance(v, str))}
+        any_of = node.get("anyOf")
+        if isinstance(any_of, list):
+            non_null = [x for x in any_of if x.get("type") != "null"]
+            rest = {k: v for k, v in node.items() if k != "anyOf"}
+            if len(non_null) == 1:
+                node = {**non_null[0], **rest}
+            elif all(set(x) == {"type"} for x in non_null):
+                node = {"type": [x["type"] for x in non_null], **rest}
+            else:
+                node = {"anyOf": non_null, **rest}
+        if node.get("default", "missing") is None:
+            node.pop("default")
+        return node
+    if isinstance(node, list):
+        return [_compact_schema(x) for x in node]
+    return node
 
 
 @dataclass
@@ -43,11 +84,11 @@ class ToolInfo:
         for arg in INJECTED_ARGS:
             props.pop(arg, None)
         schema["required"] = [r for r in schema.get("required", []) if r not in INJECTED_ARGS]
-        schema.pop("title", None)
-        for p in props.values():
-            p.pop("title", None)
-        return {"type": "function", "function": {"name": self.name, "description": self.description,
-                                                 "parameters": schema}}
+        if not schema["required"]:
+            schema.pop("required")
+        return {"type": "function", "function": {"name": self.name,
+                                                 "description": _compact_description(self.description),
+                                                 "parameters": _compact_schema(schema)}}
 
     def to_dict(self) -> dict[str, Any]:
         return {"name": self.name, "server": self.server, "description": self.description,
@@ -134,7 +175,7 @@ class MCPToolHub:
         return {"tools": [t.to_dict() for t in self.tools.values()], "resources": self.resources,
                 "prompts": self.prompts}
 
-    def llm_tools(self, exclude: tuple[str, ...] = ("generate_pdf_report",)) -> list[dict[str, Any]]:
+    def llm_tools(self, exclude: tuple[str, ...] = AGENT_EXCLUDED_TOOLS) -> list[dict[str, Any]]:
         return [t.llm_schema() for n, t in self.tools.items() if n not in exclude]
 
     async def call(self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None) -> ToolCallResult:
