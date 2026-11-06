@@ -42,8 +42,8 @@ export const api = {
       json({ sql }),
     ),
   catalog: () => req<Catalog>("/api/mcp/catalog"),
-  startRun: (dataset_id: string, question: string) =>
-    req<{ run_id: string }>("/api/runs", json({ dataset_id, question })),
+  startRun: (dataset_id: string, question: string, clarification?: string) =>
+    req<{ run_id: string }>("/api/runs", json({ dataset_id, question, clarification })),
   runs: (dataset_id?: string) => req<RunSummary[]>(`/api/runs${dataset_id ? `?dataset_id=${dataset_id}` : ""}`),
   run: (id: string) => req<Run>(`/api/runs/${id}`),
   reportUrl: (id: string) => `${BASE}/api/runs/${id}/report.pdf`,

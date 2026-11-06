@@ -118,12 +118,60 @@ export interface RunMetrics {
   sql_queries: number;
 }
 
+export interface Answer {
+  primary_entity: string | null;
+  dimension: string | null;
+  metric_column: string | null;
+  direction: string | null;
+  current_period: string[] | null;
+  previous_period: string[] | null;
+  key_value: number | null;
+  evidence_ids: string[];
+}
+
+export interface PeriodInfo {
+  start: string;
+  end: string;
+  label: string;
+  complete: boolean;
+  coverage_ratio: number;
+}
+
+export interface TaskSpec {
+  question_type: string;
+  metric_column: string | null;
+  aggregation: string | null;
+  group_by: string[];
+  answer_target: string;
+  date_column: string | null;
+  current: PeriodInfo | null;
+  previous: PeriodInfo | null;
+  assumptions: string[];
+  issues: string[];
+}
+
+export interface Alignment {
+  status: "aligned" | "misaligned";
+  checks: Record<string, "pass" | "fail" | "n/a" | "unverified">;
+  issues: string[];
+}
+
+export interface Clarification {
+  question: string;
+  options: string[];
+  phrase: string | null;
+}
+
 export interface RunResult {
+  spec?: TaskSpec | null;
+  alignment?: Alignment | null;
+  needs_clarification?: Clarification | null;
   plan?: Plan;
   reflections?: Reflection[];
   synthesis?: {
     title: string;
     summary: string;
+    answer?: Answer;
     findings: Finding[];
     limitations: string[];
     recommendations: string[];

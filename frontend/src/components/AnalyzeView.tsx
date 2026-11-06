@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { fmtNum } from "../format";
-import type { Chart, Dataset, Evidence, Plan, Reflection, Run, RunSummary, TimelineEvent } from "../types";
+import type {
+  Alignment, Chart, Clarification, Dataset, Evidence, Plan, Reflection, Run, RunSummary, TaskSpec, TimelineEvent,
+} from "../types";
 import { EvidenceDrawer } from "./EvidenceDrawer";
 import { Findings, VerificationBadge } from "./Findings";
 import { PlotlyChart } from "./PlotlyChart";
@@ -96,11 +98,12 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
     [loadHistory],
   );
 
-  async function start() {
-    if (question.trim().length < 5) return;
+  async function start(clarification?: string) {
+    const q = (clarification && run?.question) || question.trim();
+    if (q.length < 5) return;
     setError(null);
     try {
-      const { run_id } = await api.startRun(dataset.id, question.trim());
+      const { run_id } = await api.startRun(dataset.id, q, clarification);
       await openRun(run_id);
       loadHistory();
     } catch (e) {
@@ -111,6 +114,7 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
   const running = run?.status === "running";
   const result = run?.result;
   const syn = result?.synthesis;
+  const clar = run?.status === "needs_clarification" ? result?.needs_clarification : null;
   const ver = result?.verification;
   const metrics = result?.metrics;
   const evidence = result?.evidence?.length ? result.evidence : live.evidence;
@@ -135,7 +139,7 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
                 <span key={q} className="chip" onClick={() => setQuestion(q)}>{q}</span>
               ))}
             </div>
-            <button className="btn primary" onClick={start} disabled={running || question.trim().length < 5}>
+            <button className="btn primary" onClick={() => start()} disabled={running || question.trim().length < 5}>
               {running ? "Investigating…" : "Run analysis"}
             </button>
           </div>
@@ -161,7 +165,7 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
             <div className="row" style={{ justifyContent: "space-between" }}>
               <h3 style={{ margin: 0 }}>{syn?.title || run.question}</h3>
               <div className="row">
-                <span className={`badge ${running ? "info" : run.status === "completed" ? "ok" : "warn"}`}>
+                <span className={`badge ${running || run.status === "needs_clarification" ? "info" : run.status === "completed" ? "ok" : "warn"}`}>
                   {running ? "running" : run.status.replaceAll("_", " ")}
                 </span>
                 {result?.report?.ok && (
@@ -189,6 +193,10 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
             ) : null}
           </div>
         )}
+
+        {clar && <ClarificationCard clar={clar} onAnswer={(c) => start(c)} />}
+
+        {(result?.spec || result?.alignment) && !running && <ScopeCard spec={result?.spec} alignment={result?.alignment} />}
 
         {syn && (
           <div className="card">
@@ -314,5 +322,78 @@ function Legend({ color, label }: { color: string; label: string }) {
       <span className="tl-dot" style={{ background: color, marginTop: 0 }} />
       {label}
     </span>
+  );
+}
+
+function ClarificationCard({ clar, onAnswer }: { clar: Clarification; onAnswer: (c: string) => void }) {
+  const [text, setText] = useState("");
+  return (
+    <div className="card" style={{ borderColor: "var(--accent)" }}>
+      <h3>Which period did you mean?</h3>
+      <p>{clar.question}</p>
+      <p className="small muted">
+        DataBeacon stopped before spending any LLM tokens because the period could not be determined reliably from the data.
+      </p>
+      <div className="row">
+        {clar.options.map((o) => (
+          <button key={o} className="btn" onClick={() => onAnswer(o)}>{o}</button>
+        ))}
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Or type it, e.g. Q4 2025 or 2025-10-01 to 2025-12-31"
+          style={{ flex: 1, minWidth: 220, padding: "7px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--panel-2)" }}
+        />
+        <button className="btn primary" disabled={text.trim().length < 3} onClick={() => onAnswer(text.trim())}>Continue</button>
+      </div>
+    </div>
+  );
+}
+
+function ScopeCard({ spec, alignment }: { spec?: TaskSpec | null; alignment?: Alignment | null }) {
+  const badge = (v: string) => (v === "pass" ? "ok" : v === "fail" ? "err" : "muted");
+  return (
+    <div className="card">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0 }}>Scope &amp; task alignment</h3>
+        {alignment && (
+          <span className={`badge ${alignment.status === "aligned" ? "ok" : "err"}`}>
+            {alignment.status === "aligned" ? "answers the question asked" : "does not match the question"}
+          </span>
+        )}
+      </div>
+      {spec && (
+        <div className="small" style={{ marginTop: 8 }}>
+          {spec.current && (
+            <div>
+              <strong>Period:</strong> {spec.current.label} ({spec.current.start} – {spec.current.end}, end exclusive)
+              {spec.previous && <> vs {spec.previous.label}</>}
+            </div>
+          )}
+          {spec.metric_column && <div><strong>Metric:</strong> {spec.aggregation || "sum"}({spec.metric_column})</div>}
+          {spec.group_by.length > 0 && <div><strong>Grouping:</strong> {spec.group_by.join(", ")}</div>}
+          {spec.answer_target && <div><strong>Answer target:</strong> {spec.answer_target}</div>}
+          {spec.assumptions.length > 0 && (
+            <ul className="muted" style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {spec.assumptions.map((a, i) => <li key={i}>{a}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+      {alignment && (
+        <div className="row small" style={{ marginTop: 8 }}>
+          {Object.entries(alignment.checks).map(([k, v]) => (
+            <span key={k} className={`badge ${badge(v)}`}>{k.replace("_", " ")}: {v}</span>
+          ))}
+        </div>
+      )}
+      {alignment?.issues.length ? (
+        <ul className="unsupported" style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+          {alignment.issues.map((i, k) => <li key={k}>{i}</li>)}
+        </ul>
+      ) : null}
+    </div>
   );
 }
