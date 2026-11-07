@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import __version__
 from ..config import get_settings
-from ..datasets import DatasetError, DatasetRegistry
+from ..datasets import DatasetError
 from ..llm import provider_info
 from ..mcp_client import MCPToolHub
 from ..observability import setup_tracing
@@ -70,7 +70,9 @@ class SQLRequest(BaseModel):
 def create_app(manager: RunManager | None = None) -> FastAPI:
     settings = get_settings()
     setup_tracing()
-    registry = manager.registry if manager else DatasetRegistry(settings.datasets_dir)
+    from ..storage.datasets import make_registry
+
+    registry = manager.registry if manager else make_registry()
     limiter = RateLimiter()  # per-instance flood guard (requests/minute): no shared writes per request
     from ..storage import open_store
 

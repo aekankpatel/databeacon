@@ -10,7 +10,6 @@ from typing import Any, TypeVar
 
 import anyio
 
-from ..config import get_settings
 from ..datasets import DatasetRegistry
 
 T = TypeVar("T")
@@ -20,7 +19,9 @@ logging.getLogger("mcp.server.mcpserver.server").setLevel(logging.WARNING)
 
 
 def default_registry() -> DatasetRegistry:
-    return DatasetRegistry(get_settings().datasets_dir)
+    from ..storage.datasets import make_registry
+
+    return make_registry()
 
 
 async def in_thread(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
