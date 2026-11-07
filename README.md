@@ -98,8 +98,12 @@ stateDiagram-v2
 See [DEPLOYMENT.md](DEPLOYMENT.md) for:
 - the public-deployment readiness audit;
 - `DATABEACON_PUBLIC_MODE`: per-visitor isolation, rate limits, retention and an optional access code;
-- why the current backend can't run as-is on Vercel serverless functions;
-- the recommended $0 architecture and launch steps.
+- the $0 hosted architecture: Vercel Hobby (frontend + Python function) + Cloudflare D1 (shared
+  datasets, runs, events, rate limits, neuron ledger) + Cloudflare Workers AI;
+- inline serverless execution, and the difference between reconnecting to saved progress and an
+  interrupted run;
+- replay mode (recorded investigations, no neurons);
+- what is verified, what still needs a real deploy, and the exact Cloudflare and Vercel setup.
 
 ## Quick start
 

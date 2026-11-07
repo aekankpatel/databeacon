@@ -30,6 +30,7 @@ from ..profiling import profile_table, schema_summary
 from ..replays import get_replay, list_replays, replay_pdf
 from ..runs import RunManager
 from ..sql_guard import SQLValidationError, execute_readonly
+from ..storage import shared_storage_enabled
 from .security import (
     ACCESS_CODE_HEADER,
     FRONTEND_CSP,
@@ -195,6 +196,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
                 "mcp_transport": settings.mcp_transport, "public_mode": settings.public_mode,
                 "access_code_required": bool(settings.demo_access_code),
                 "replay_only": settings.replay_only, "execution": settings.execution_mode,
+                "storage": "d1" if shared_storage_enabled() else "local",
                 "replays": len(list_replays()),
                 "limits": {"max_upload_mb": settings.max_upload_mb, "max_rows": settings.max_rows,
                            "max_columns": settings.max_columns,

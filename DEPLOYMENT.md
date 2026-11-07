@@ -1,8 +1,10 @@
 # Deploying DataBeacon
 
-Status: **ready for review, not deployed.** This document records the readiness audit, the
-hosting analysis under a strict $0 budget, the recommended architecture, open decisions and the
-exact launch steps.
+Status: **implemented and tested locally, not deployed.** Architecture: Vercel Hobby (frontend +
+Python function) + Cloudflare D1 (shared state) + Cloudflare Workers AI (LLM). Everything here is on
+free plans that refuse rather than bill. This document records the readiness audit, the platform
+findings the design relies on, how serverless execution works, what is still unverified and the
+exact setup steps.
 
 ## 1. Readiness audit
 
@@ -25,107 +27,168 @@ functions, read-only connections), credentials only from the environment or inje
 
 Everything is behind `DATABEACON_PUBLIC_MODE=1`. Local development behaves as before.
 
-## 2. Can the current backend run on Vercel?
-
-The frontend can: it is a static Vite build, and Vercel Hobby serves it for free.
-
-**The backend, as built, cannot run on Vercel reliably.** Vercel runs Python as serverless
-functions. As of November 2026 the Hobby plan allows 300 s per invocation, 2 GB of memory, a
-500 MB uncompressed Python bundle and a request body of about 4.5 MB (verify the current figures
-in Vercel's limits page). Against those limits:
-
-| Requirement of the current backend | On Vercel functions |
-|---|---|
-| Investigations run as **background tasks** after `POST /api/runs` returns | Work after the response has been sent is not guaranteed; the instance may be frozen |
-| Live timeline over **SSE from in-memory state** of that same process | The events request can land on a different instance with no knowledge of the run |
-| **DuckDB files, SQLite run store, PDFs** on local disk shared across requests | Only `/tmp`, per instance and temporary; nothing is shared between instances |
-| **Neuron ledger** must be shared and durable to enforce the free tier | A per-instance `/tmp` ledger cannot enforce a global budget |
-| Dependency closure is **~491 MB unpacked** (SciPy, Plotly, pandas, NumPy, OpenAI SDK) | At the 500 MB Python limit. It would need trimming (e.g. building chart JSON without Plotly) |
-| Uploads up to 4 MB | Fits under the ~4.5 MB body limit |
-| 60–90 s investigations | Fit within 300 s, if they run inside the request |
-
-So "just deploy the FastAPI app to Vercel" would fail in normal use: lost runs, broken live
-timelines and data disappearing between requests.
-
-## 3. $0 hosting options
-
-| Option | Cost risk | Effort | Verdict |
-|---|---|---|---|
-| **A. Vercel only, stateless backend.** Each investigation runs inside one streaming request, and the browser keeps datasets and results | None: Hobby is free with no card; Cloudflare Free plan refuses beyond 10k neurons | **Major refactor** (below) | **Recommended** for a strict $0 public deployment |
-| B. Vercel frontend + free container host (current backend unchanged) | Depends on host | Small (config only) | **No suitable host found.** New Hugging Face Docker Spaces now need a paid plan; Koyeb requires a card (with a $29 pre-authorisation); Render's free tier is reported to ask for a card, with 512 MB RAM and 15-minute sleep. None meets "no card, cannot be charged" reliably |
-| C. Vercel frontend + a free managed store (Upstash, Turso, Neon…) for state | Free tiers, but third-party accounts with limits that can change | Medium | Not recommended under the strict rule |
-| D. Run the existing Docker image yourself (laptop, home server) behind a free tunnel | None | None | Fine for demos; not a hosted public app |
-
-### Recommended: option A, "stateless on Vercel"
+## 2. Architecture
 
 ```
-Browser (React on Vercel CDN)
-  │ dataset file (≤4 MB) or "sample" + question
+Browser (React, served from Vercel's CDN)
+  │  POST /api/runs  → the response *is* the live event stream (text/event-stream)
   ▼
-Vercel Python function  POST /api/investigate      ← one request per investigation, ≤300 s
-  ├─ ingest to /tmp DuckDB → profile → LangGraph agent → MCP servers (in-process)
-  ├─ streams timeline events (NDJSON) as they happen
-  └─ final event: answer, verification, alignment, charts, PDF (base64); /tmp deleted
-Browser keeps datasets and past results in IndexedDB (never on the server)
-Cloudflare Workers AI (Free plan) ← the hard $0 limit; optional Groq fallback
+Vercel Python function api/index.py (FastAPI, ≤300 s, 2 GB)
+  ├─ LangGraph agent → MCP servers (in-process) → DuckDB SQL on a /tmp copy of the dataset
+  ├─ evidence verification, task alignment, charts (Plotly JSON), PDF report
+  └─ persists every timeline event, heartbeat, result and PDF as it goes
+        │  HTTPS (D1 query API, atomic batches)
+        ▼
+Cloudflare D1 (Free)  datasets (zstd Parquet chunks) · runs · run_events · blobs
+                      neuron ledger + reservations · rate limits · provider blocks
+Cloudflare Workers AI (Free, 10k neurons/day)  ← optional Groq fallback
 ```
 
-**What changes (needs your approval):**
-1. A new `POST /api/investigate` endpoint that runs the whole investigation inside the request and
-   streams events. The existing session API stays for local and Docker use.
-2. The Data tab's profile and SQL console send the file with each request (≤4 MB), or the SQL
-   console is disabled in the hosted build.
-3. Run history moves to IndexedDB in the browser. Isolation then holds by construction, because
-   nothing is stored server-side.
-4. The Python bundle is trimmed below 500 MB: Plotly is replaced by a small chart-JSON builder
-   (charts look the same in the browser), and tests and evaluations are excluded from the bundle.
-5. A `vercel.json` adds the Python function (`maxDuration` 300).
+- **One Vercel project** serves both the static frontend (`frontend/dist`) and the function
+  (`/api/*` is rewritten to `api/index.py`). Same origin, so no CORS and no `VITE_API_BASE`.
+- **Nothing depends on instance-local state.** `/tmp` is only a cache: a dataset missing on a cold
+  instance is rebuilt from D1 and checked against its SHA-256. Run status, events, results, PDFs,
+  rate limits and the neuron ledger all live in D1, so every instance sees the same numbers.
+- **Local development is unchanged.** Without `DATABEACON_STORAGE=d1` the same tables live in SQLite
+  files under `DATABEACON_DATA_DIR`, and runs execute as background tasks (`DATABEACON_EXECUTION=background`).
 
-**Trade-offs:**
-- Uploads are limited to ~4 MB.
-- There's a cold start of a few seconds.
-- History is per browser.
-- The neuron ledger and rate limits become **per function instance**. The hard spending limit is
-  then Cloudflare's Free plan, which refuses (error 4006) rather than charges. A busy public demo can
-  use up the day's ~10 analyses, so enable `DEMO_ACCESS_CODE` and consider a *replay mode* that shows
-  recorded investigations without using the LLM.
-- Effort is about 1–2 days, plus tests.
+### Atomic operations
 
-## 4. Blockers
+D1's HTTP API has no `BEGIN`/`COMMIT`, so each decision is a single conditional statement:
+`INSERT … SELECT … WHERE <limit not reached>`, judged by `meta.changes`.
+- Neuron reservation: inserted only if spent + outstanding reservations + this estimate ≤ the daily
+  limit. Recording a call (usage row + reservation release) is one atomic `batch`.
+- Rate limits (runs per hour/day, uploads): inserted only if the window count is below the limit.
+- If D1 cannot be reached, the budget **fails closed**: no LLM call is made.
 
-1. **Your decision on option A** (or on accepting a card-requiring host for option B).
-2. **Cloudflare account must stay on the Workers Free plan.** This is what makes overspending
-   impossible. If it is ever upgraded to Workers Paid, usage beyond the allocation is billed.
-   Keep `DATABEACON_ALLOW_PAID_INFERENCE` unset.
-3. **Vercel account** linked to GitHub (Hobby is for non-commercial use; a portfolio fits).
-4. **Branch:** Vercel builds production from `main`. Merge `claude/hopeful-darwin-6escku` into `main`
-   (or set the production branch in Vercel).
-5. **Public AI capacity:** ~10k neurons/day is roughly 10 analyses. Decide between an access code,
-   replay mode, or accepting that the daily budget runs out.
+### Serverless execution (inline mode)
 
-## 5. Launch steps
+Vercel gives no guarantee for work after a response ends, so on Vercel (`VERCEL` is set) runs are
+**inline**: the investigation runs inside the `POST /api/runs` request and streams its events.
+- The function keeps working if the browser disconnects (the stream keeps being consumed), and
+  saves events every ~0.75 s plus a heartbeat every 15 s.
+- The agent has a deadline (`RUN_DEADLINE_S`, 270 s). With 75 s left it stops investigating and
+  writes the answer, verification and PDF from what it has (`deadline_reached` in the timeline).
+  A hard limit (deadline + `RUN_DEADLINE_GRACE_S`) marks the run `interrupted`.
 
-### Frontend on Vercel (works today; needs a reachable backend for analyses)
-1. Vercel → *Add New Project* → import `aekankpatel/databeacon`.
-2. **Root Directory:** `frontend`. Framework is detected as Vite (`frontend/vercel.json` sets build and
-   output, SPA routing, security headers and CSP).
-3. Environment variables: `VITE_API_BASE` = backend URL (empty if same origin), and optionally
-   `VITE_REPO_URL`.
-4. Deploy. No card is needed on Hobby.
+### Reconnecting vs. resuming
 
-### Backend (after option A is approved and implemented)
-1. In the same Vercel project, set these environment variables:
-   - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` (secret)
-   - `DATABEACON_PUBLIC_MODE=1`, `DATABEACON_TRUST_PROXY=1`, `DATABEACON_CORS_ORIGINS=https://<project>.vercel.app`
-   - `DATABEACON_DATA_DIR=/tmp/databeacon`
-   - `DATABEACON_MAX_ITERATIONS=2`, `DATABEACON_MAX_STEPS_PER_ITERATION=6` (the benchmarked configuration)
-   - optionally `DATABEACON_DEMO_ACCESS_CODE`
-   - optionally the Groq fallback (`DATABEACON_FALLBACK_PROVIDER=groq`, `GROQ_API_KEY`)
-2. Deploy, then check `/api/health`, run the sample question once and confirm `/api/usage`.
+These are different and the UI says which one happened:
+- **Reconnected to saved progress.** The page was reloaded, or the request reached another instance,
+  while the run is still executing elsewhere. The browser reads the saved events from D1 and keeps
+  following until the run finishes. Nothing is lost or repeated.
+- **Interrupted.** The executing instance stopped (timeout, crash, platform recycle): no heartbeat for
+  `RUN_STALE_S` (120 s). The run is marked `interrupted` with a reason and `resumable: false`; the
+  saved timeline and partial evidence stay visible. An interrupted run is **not resumed** (LLM state
+  and the investigation cannot be safely restored mid-step). "Start it again" begins a new run that
+  records `rerun_of` and spends neurons again.
 
-### Self-hosting today (option D, no code changes)
+### Replay mode
+
+`/api/replays` serves four recorded investigations from real Cloudflare benchmark runs
+(`backend/replays/`): full timeline, answer, charts and PDF, played back in the "Recorded" tab with
+no LLM calls and no neurons. `DATABEACON_REPLAY_ONLY=1` turns the public demo into replay-only (live
+runs return 403), a safe fallback once the daily budget is spent or if you want zero AI usage.
+
+## 3. Platform findings this design relies on (checked November 2026)
+
+**Vercel Hobby** (no card): functions up to 300 s (streaming time counts), 2 GB / 1 vCPU, request
+body ≈ 4.5 MB. Python runtime `@vercel/python` 31.x: bundles ≤ 225 MB are deployed as is; 225–500 MB
+are installed at cold start with `uv` from `uv.lock`; > 500 MB fails.
+- Validated with `vercel build` (CLI 65.12.1): **417.6 MB** total dependencies; SciPy, DuckDB,
+  cryptography and jsonschema bundled (≈ 225 MB), the rest installed at cold start. Plotly is kept.
+- A local build assumes glibc 2.17 wheels and would force-bundle NumPy/pandas/DuckDB/Pillow; the
+  Vercel build image (Amazon Linux 2023, glibc 2.34) accepts their manylinux_2_27/2_28 wheels. Verified
+  by simulating that image locally; **confirm on the first real deploy** (section 5).
+- `excludeFiles` keeps the frontend, tests, docs and eval runs out of the function.
+- Measured memory: ~155 MB after startup, ~315 MB peak during an analysis.
+
+**Cloudflare D1 Free** (no card): 5 M rows read and 100 k rows written per day, 500 MB per database,
+2 MB per row, 100 KB per statement, 30 s per API request. An analysis writes on the order of 100–300
+rows, far below the daily cap; retention (24 h) keeps the database small.
+
+**Dataset storage**: DuckDB → zstd Parquet → base64 chunks (512 KB, halved automatically if D1
+rejects the size) → DuckDB, with SHA-256 checked on rebuild. `python evals/validate_dataset_codec.py`
+round-trips realistic data byte-identically (schema, rows and an order-independent content hash):
+
+| Dataset | Rows × cols | CSV | Parquet | Chunks |
+|---|---|---|---|---|
+| e-commerce sample | 6,000 × 12 | 1.53 MB | 0.27 MB | 1 |
+| mixed types (tz timestamps, Unicode, NULLs, leading zeros, int64 extremes) | 30,000 × 11 | 8.82 MB | 0.87 MB | 2 |
+| wide | 20,000 × 100 | 38.9 MB | 15.1 MB | 29 |
+| telemetry at the 4 MB cap | 120,000 × 4 | 4.19 MB | 0.79 MB | 2 |
+| nested JSON (structs, lists) | 8,000 × 4 | — | small | 1 |
+
+**Excluded because they need a card**: Cloudflare R2, Workers Paid, Vercel Pro. Vercel Blob was
+avoided. **Keep the Cloudflare account on the Workers Free plan**: it refuses (error 4006) instead of
+billing beyond the allocation. Leave `DATABEACON_ALLOW_PAID_INFERENCE` unset.
+
+## 4. Tests
+
+- `pytest` (115 tests), including storage isolation per session on D1, concurrent neuron reservations
+  that never exceed the limit, concurrent rate limits, dataset rebuild on a cold instance and checksum
+  failure, inline streaming, client disconnect, reconnect from another instance, stale-executor
+  interruption, deadline and hard time limit, and replay mode (no LLM calls, blocked live runs).
+  D1 is exercised through an HTTP-level emulator (`tests/d1_emulator.py`) that applies the real
+  request/response format, batch atomicity, row size limits and injected failures.
+- `python -m evals.run --mode scripted` (offline, scripted LLM): all cases pass.
+- `scripts/e2e_serverless.sh`: a browser test with two backend instances sharing one store: replay
+  playback, a live inline run, reconnecting from the second instance, and an interrupted run after
+  killing the first instance, then "Start it again".
+
+### Not verified yet (needs the real platforms)
+
+- A real Vercel deploy: cold-start time with the runtime `uv` install (expect tens of seconds on the
+  first request after idle), and whether the function keeps running after the browser disconnects
+  (designed for it; if not, the run is reported interrupted, never silently lost).
+- Real D1: the current Cloudflare token has no D1 permission, so D1 was tested with the emulator.
+  Latency per query and the exact parameter-size limit are to be checked (chunks shrink automatically).
+- Cloudflare API rate limits under concurrent public use.
+
+## 5. Setup (do not deploy until you are ready)
+
+### Cloudflare (dash.cloudflare.com, Free plan)
+1. **Create the database:** *Storage & Databases → D1 → Create* (name e.g. `databeacon`). Copy its
+   **Database ID**. No schema step is needed: tables are created on first use.
+2. **API token:** *My Profile → API Tokens → Create Token → Custom token*, account-scoped to your
+   account, with **Account → Workers AI → Read** and **Account → D1 → Edit**. Either use one token for
+   both (`CLOUDFLARE_API_TOKEN`) or a separate D1 token (`DATABEACON_D1_API_TOKEN`).
+3. Note your **Account ID** (dashboard sidebar / Workers & Pages overview).
+4. Confirm *Workers & Pages → Plans* shows **Workers Free**.
+
+### Vercel (vercel.com, Hobby)
+1. *Add New → Project* → import `aekankpatel/databeacon`. **Root Directory: the repository root**
+   (not `frontend`). `vercel.json` sets the build, output, function (`maxDuration` 300), rewrites and
+   security headers. Leave the framework preset as detected ("Other" is fine).
+2. **Environment variables** (Production):
+
+   | Variable | Value |
+   |---|---|
+   | `CLOUDFLARE_ACCOUNT_ID` | your account ID |
+   | `CLOUDFLARE_API_TOKEN` | the token (mark *Sensitive*) |
+   | `DATABEACON_STORAGE` | `d1` |
+   | `DATABEACON_D1_DATABASE_ID` | the database ID |
+   | `DATABEACON_PUBLIC_MODE` | `1` |
+   | `DATABEACON_TRUST_PROXY` | `1` |
+   | `DATABEACON_CORS_ORIGINS` | `https://<project>.vercel.app` |
+   | `DATABEACON_MAX_ITERATIONS` | `2` |
+   | `DATABEACON_MAX_STEPS_PER_ITERATION` | `6` |
+   | optional `DATABEACON_DEMO_ACCESS_CODE` | a shared code for live analyses |
+   | optional `DATABEACON_REPLAY_ONLY` | `1` for recorded investigations only |
+   | optional `DATABEACON_D1_API_TOKEN` | separate D1 token |
+   | optional `DATABEACON_FALLBACK_PROVIDER` / `GROQ_API_KEY` | Groq fallback |
+
+   `DATABEACON_EXECUTION=inline` and `DATABEACON_DATA_DIR=/tmp/databeacon` are automatic on Vercel.
+3. **Production branch:** merge `claude/hopeful-darwin-6escku` into `main`, or set the production
+   branch under *Settings → Git*.
+4. After the first deploy: check the build log for "Installing required dependencies" (runtime
+   install) and no size error, then `/api/health` (`storage: d1`, `execution: inline`), one sample
+   analysis, `/api/usage`, a page reload mid-run (should say *Reconnected to saved progress*) and the
+   Recorded tab.
+
+### Self-hosting (Docker, no Vercel or D1)
 ```bash
 cp .env.example .env    # set CLOUDFLARE_*, DATABEACON_PUBLIC_MODE=1, DATABEACON_CORS_ORIGINS
 docker compose up --build
 ```
-The container honours `$PORT`, so it also runs unchanged on any container host you choose later.
+The container honours `$PORT`, uses local SQLite storage and background execution.
