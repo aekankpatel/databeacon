@@ -150,8 +150,10 @@ def build_provider_model(provider: str, temperature: float = 0.1, timeout: float
     if effort in {"low", "medium", "high"}:
         extra["reasoning_effort"] = effort
     cls = _cloudflare_chat_class() if provider == "cloudflare" else ChatOpenAI
+    # Cloudflare: no SDK-level retries. The SDK would silently resend a 429 - including error 4006
+    # ("daily free allocation used up") - before our code can see it; ainvoke_with_retry decides instead.
     return cls(model=model, api_key=api_key, base_url=base_url, temperature=temperature, timeout=timeout,
-                      max_retries=1, max_tokens=int(os.environ.get("DATABEACON_MAX_OUTPUT_TOKENS", 4096)), **extra)
+                      max_retries=0 if provider == "cloudflare" else 1, max_tokens=int(os.environ.get("DATABEACON_MAX_OUTPUT_TOKENS", 4096)), **extra)
 
 
 class ProviderChain:

@@ -51,6 +51,23 @@ def resolve_gold(db_path: Path, case: dict[str, Any], by_id: dict[str, dict[str,
     return g
 
 
+async def preflight(llm) -> tuple[bool, str]:
+    """One tiny request through the guarded provider chain: confirms the provider still has free
+    allowance (Cloudflare's meter is not readable with an inference-only token). Costs a few neurons,
+    nothing if the provider refuses. Never retried on a quota error."""
+    from langchain_core.messages import HumanMessage
+
+    from databeacon.llm import QuotaExhaustedError
+
+    try:
+        resp = await llm.ainvoke([HumanMessage("Reply with the single word: ok")])
+    except QuotaExhaustedError as exc:
+        return False, f"provider quota: {exc}"[:400]
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"[:400]
+    return True, (resp.content if isinstance(resp.content, str) else str(resp.content))[:40]
+
+
 def _markdown(summary: dict, scores: list[dict], meta: dict) -> str:
     lines = [f"# DataBeacon evaluation - {meta['timestamp']}", "",
              f"Mode: `{meta['mode']}` · Provider: `{meta['provider']}` · Model: `{meta['model']}` · "
@@ -88,6 +105,8 @@ async def main() -> int:
     ap.add_argument("--reuse-run", action="append", default=[], metavar="CASE=RUN_ID",
                     help="score a stored, completed run for CASE instead of running it again (resume after an "
                          "interruption without re-spending)")
+    ap.add_argument("--no-preflight", action="store_true",
+                    help="live mode: skip the one-request allowance check before the first new case")
     ap.add_argument("--allow-fallback", action="store_true",
                     help="live mode: allow a configured fallback provider (off by default: the benchmark should "
                          "measure one provider and never switch to possibly paid inference)")
@@ -137,8 +156,20 @@ async def main() -> int:
         budget_meta = {"neurons_used_today_before": round(used0, 1), "run_cap": args.max_neurons,
                        "prior_spend": args.prior_spend,
                        "hard_daily_limit_for_run": hard_limit, "free_allocation": 10_000}
-        print(f"Budget: {used0:.0f} neurons used today; this run may spend at most {hard_limit - used0:.0f}.",
-              flush=True)
+        print(f"Budget: {used0:.0f} neurons used in the guard's window; this run may spend at most "
+              f"{hard_limit - used0:.0f}.", flush=True)
+        needs_live = [c for c in cases if c["id"] not in dict(r.split("=", 1) for r in args.reuse_run)]
+        if needs_live and not args.no_preflight:
+            from databeacon.llm import build_chat_model
+
+            before = usage_db.used()
+            ok, detail = await preflight(build_chat_model(settings.temperature, settings.llm_timeout_s))
+            budget_meta["preflight"] = {"ok": ok, "detail": detail, "neurons": round(usage_db.used() - before, 1)}
+            print(f"Preflight: {'ok' if ok else 'FAILED'} ({detail}); {budget_meta['preflight']['neurons']} neurons",
+                  flush=True)
+            if not ok:
+                print("Stopping before any case: the provider has no usable allowance.", flush=True)
+                return 2
 
     reuse = dict(r.split("=", 1) for r in args.reuse_run)
     scores = []
@@ -220,7 +251,8 @@ async def main() -> int:
     summary["total_cloudflare_neurons"] = round(sum(s["cloudflare_neurons"] for s in scores), 1)
     if args.prior_spend:
         summary["benchmark_neurons_incl_interrupted_work"] = round(
-            args.prior_spend + sum(s["cloudflare_neurons"] for s in scores if not s.get("reused_run_id")), 1)
+            args.prior_spend + sum(s["cloudflare_neurons"] for s in scores if not s.get("reused_run_id"))
+            + (budget_meta.get("preflight") or {}).get("neurons", 0.0), 1)
     info = provider_info()
     meta = {"timestamp": datetime.now(UTC).isoformat(timespec="seconds"), "mode": args.mode,
             "provider": "scripted" if args.mode == "scripted" else info["provider"],

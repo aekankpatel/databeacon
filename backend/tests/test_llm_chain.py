@@ -180,3 +180,39 @@ def test_legacy_daily_totals_migrate_conservatively(tmp_path):
     # counted at the end of yesterday, i.e. still inside the last 24 hours
     assert b.used() == pytest.approx(6815.3)
     assert NeuronBudget(path, daily_limit=9000, window="utc_day").used() == 0
+
+
+def test_cloudflare_client_does_not_retry_on_its_own(monkeypatch):
+    from databeacon.llm import build_provider_model
+
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "0" * 32)
+    monkeypatch.setenv("DATABEACON_INJECTED_AUTH", "1")
+    assert build_provider_model("cloudflare").max_retries == 0  # a 429/4006 is never silently resent
+
+
+async def test_preflight_stops_on_4006_with_a_single_request(tmp_path):
+    from evals.run import preflight
+
+    cf = Fake(exc=Cf4006())
+    ok, detail = await preflight(ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)],
+                                               NeuronBudget(tmp_path / "u.sqlite")))
+    assert not ok and "provider quota" in detail and cf.calls == 1
+    ok, _ = await preflight(ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", Fake("ok"))],
+                                          NeuronBudget(tmp_path / "v.sqlite")))
+    assert ok
+
+
+async def test_expired_block_does_not_override_the_ledger(tmp_path):
+    import sqlite3
+    import time
+
+    path = tmp_path / "u.sqlite"
+    b = NeuronBudget(path, daily_limit=9000)
+    b.block_provider("cloudflare", "4006", seconds=-1)  # the one-hour block has already expired...
+    with sqlite3.connect(path) as c:  # ...but the last 24 hours still hold 9,500 neurons
+        c.execute("INSERT INTO llm_calls (ts, provider, model, neurons) VALUES (?, 'cloudflare', 'm', 9500)",
+                  (time.time() - 3600,))
+    cf = Fake("cf")
+    with pytest.raises(QuotaExhaustedError):
+        await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], b).ainvoke([HumanMessage("hi")])
+    assert cf.calls == 0

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "timestamp": "2026-11-07T00:42:47+00:00",
+    "timestamp": "2026-11-07T05:42:49+00:00",
     "mode": "scripted",
     "provider": "scripted",
     "model": "scripted",
@@ -26,8 +26,8 @@
     "sql_validity": 0.584,
     "tool_selection_f1": 1.0,
     "hallucination_rate": 0.0,
-    "avg_latency_s": 0.73,
-    "avg_total_tokens": 25759.0,
+    "avg_latency_s": 0.97,
+    "avg_total_tokens": 25760.5,
     "avg_tool_calls": 8.5,
     "error_recovery_rate": 1.0,
     "scorer_calibration": 1.0,
@@ -85,7 +85,7 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.97,
+      "latency_s": 1.27,
       "total_tokens": 20273,
       "tokens_by_stage": {
         "plan": {
@@ -190,17 +190,17 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.39,
-      "total_tokens": 29440,
+      "latency_s": 0.54,
+      "total_tokens": 29443,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
-          "input_tokens": 932,
+          "input_tokens": 933,
           "output_tokens": 197
         },
         "act": {
           "calls": 12,
-          "input_tokens": 18637,
+          "input_tokens": 18639,
           "output_tokens": 264
         },
         "reflect": {
@@ -294,7 +294,7 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.49,
+      "latency_s": 0.68,
       "total_tokens": 29722,
       "tokens_by_stage": {
         "plan": {
@@ -396,17 +396,17 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.49,
-      "total_tokens": 31245,
+      "latency_s": 0.67,
+      "total_tokens": 31248,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
-          "input_tokens": 932,
+          "input_tokens": 933,
           "output_tokens": 197
         },
         "act": {
           "calls": 12,
-          "input_tokens": 19386,
+          "input_tokens": 19388,
           "output_tokens": 264
         },
         "reflect": {
