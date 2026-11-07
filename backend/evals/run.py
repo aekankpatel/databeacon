@@ -82,6 +82,12 @@ async def main() -> int:
                     help="exit 1 if the scorer misjudges any deliberately wrong scripted run")
     ap.add_argument("--max-neurons", type=float, default=None,
                     help="live mode: hard cap on Cloudflare neurons for this run (enforced per call)")
+    ap.add_argument("--prior-spend", type=float, default=0.0,
+                    help="live mode: neurons already spent on this benchmark (e.g. before an interruption); "
+                         "counted against --max-neurons")
+    ap.add_argument("--reuse-run", action="append", default=[], metavar="CASE=RUN_ID",
+                    help="score a stored, completed run for CASE instead of running it again (resume after an "
+                         "interruption without re-spending)")
     ap.add_argument("--allow-fallback", action="store_true",
                     help="live mode: allow a configured fallback provider (off by default: the benchmark should "
                          "measure one provider and never switch to possibly paid inference)")
@@ -125,19 +131,42 @@ async def main() -> int:
         hard_limit = usage_db.daily_limit
         if args.max_neurons is not None:
             # lower the guard's daily limit for this process: no call may push today's total past it
-            hard_limit = min(hard_limit, used0 + args.max_neurons)
+            hard_limit = min(hard_limit, used0 + max(0.0, args.max_neurons - args.prior_spend))
             os.environ["DATABEACON_CLOUDFLARE_DAILY_NEURONS"] = str(hard_limit)
             usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
         budget_meta = {"neurons_used_today_before": round(used0, 1), "run_cap": args.max_neurons,
+                       "prior_spend": args.prior_spend,
                        "hard_daily_limit_for_run": hard_limit, "free_allocation": 10_000}
         print(f"Budget: {used0:.0f} neurons used today; this run may spend at most {hard_limit - used0:.0f}.",
               flush=True)
 
+    reuse = dict(r.split("=", 1) for r in args.reuse_run)
     scores = []
     incomplete = None
     spent = 0.0
     max_case = 0.0
     for case in cases:
+        if case["id"] in reuse:
+            from databeacon.budget import estimate_neurons
+            from databeacon.runs import RunStore
+
+            run = RunStore(settings.runs_db).get(reuse[case["id"]])
+            if not run or run["status"] == "running" or run.get("question") != case["question"]:
+                print(f"Refusing to reuse run {reuse[case['id']]} for {case['id']}: not a finished run of this case.")
+                return 2
+            m = (run.get("result") or {}).get("metrics") or {}
+            model = os.environ.get("DATABEACON_MODEL", "@cf/openai/gpt-oss-120b")
+            neurons = round(estimate_neurons(model, m.get("input_tokens", 0), m.get("output_tokens", 0)), 1)
+            ds_db = registry.db_path(run["dataset_id"])
+            score = score_case(case, run, resolve_gold(ds_db, case, by_id))
+            score.update({"cloudflare_neurons": neurons, "reused_run_id": run["id"],
+                          "served_by": m.get("served_by")})
+            scores.append(score)
+            max_case = max(max_case, neurons)
+            print(f"▶ {case['id']}: reused stored run {run['id']}", flush=True)
+            print(f"  success={score['task_success']} checks={score['checks']} tokens={score['total_tokens']} "
+                  f"neurons={neurons}", flush=True)
+            continue
         if args.mode == "live":
             est = EST_FIRST_CASE_NEURONS if not max_case else max(1500.0, 1.25 * max_case)
             remaining = usage_db.remaining()
@@ -178,6 +207,9 @@ async def main() -> int:
 
     summary = aggregate(scores)
     summary["total_cloudflare_neurons"] = round(sum(s["cloudflare_neurons"] for s in scores), 1)
+    if args.prior_spend:
+        summary["benchmark_neurons_incl_interrupted_work"] = round(
+            args.prior_spend + sum(s["cloudflare_neurons"] for s in scores if not s.get("reused_run_id")), 1)
     info = provider_info()
     meta = {"timestamp": datetime.now(UTC).isoformat(timespec="seconds"), "mode": args.mode,
             "provider": "scripted" if args.mode == "scripted" else info["provider"],
