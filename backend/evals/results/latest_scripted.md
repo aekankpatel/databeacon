@@ -1,4 +1,4 @@
-# DataBeacon evaluation - 2026-11-07T05:42:49+00:00
+# DataBeacon evaluation - 2026-11-07T05:57:38+00:00
 
 Mode: `scripted` · Provider: `scripted` · Model: `scripted` · Budgets: `{'max_iterations': 3, 'max_tool_calls': 24, 'max_steps_per_iteration': 8}`
 
@@ -19,7 +19,7 @@ A case succeeds only if every check passes: primary conclusion (structured answe
 | sql validity | 0.584 |
 | tool selection f1 | 1.0 |
 | hallucination rate | 0.0 |
-| avg latency s | 0.97 |
+| avg latency s | 0.985 |
 | avg total tokens | 25760.5 |
 | avg tool calls | 8.5 |
 | error recovery rate | 1.0 |

@@ -40,6 +40,7 @@ class Dataset:
     row_count: int
     column_count: int
     columns: list[dict[str, str]] = field(default_factory=list)
+    owner: str = "local"  # hashed visitor session (see api/security.py); "local" outside public mode
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -66,7 +67,9 @@ class DatasetRegistry:
         return path
 
     # ----------------------------------------------------------------- ingest
-    def ingest_file(self, source: Path, *, name: str | None = None, original_filename: str | None = None) -> Dataset:
+    def ingest_file(self, source: Path, *, name: str | None = None, original_filename: str | None = None,
+                    owner: str = "local", max_rows: int | None = None, max_columns: int | None = None,
+                    memory_limit: str | None = None) -> Dataset:
         source = Path(source)
         filename = original_filename or source.name
         ext = Path(filename).suffix.lower()
@@ -78,7 +81,7 @@ class DatasetRegistry:
         table = sanitize_identifier(Path(filename).stem)
         db_file = ddir / "data.duckdb"
         try:
-            con = duckdb.connect(str(db_file))
+            con = duckdb.connect(str(db_file), config={"memory_limit": memory_limit} if memory_limit else {})
             try:
                 self._load(con, source, ext, table)
                 row_count = con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -97,6 +100,12 @@ class DatasetRegistry:
         if row_count == 0:
             shutil.rmtree(ddir, ignore_errors=True)
             raise DatasetError("The file contains no rows.")
+        if max_rows and row_count > max_rows:
+            shutil.rmtree(ddir, ignore_errors=True)
+            raise DatasetError(f"The file has {row_count:,} rows; the limit here is {max_rows:,}.")
+        if max_columns and len(cols) > max_columns:
+            shutil.rmtree(ddir, ignore_errors=True)
+            raise DatasetError(f"The file has {len(cols)} columns; the limit here is {max_columns}.")
         ds = Dataset(
             id=dataset_id,
             name=name or Path(filename).stem,
@@ -106,6 +115,7 @@ class DatasetRegistry:
             row_count=int(row_count),
             column_count=len(cols),
             columns=[{"name": c, "type": t} for c, t in cols],
+            owner=owner,
         )
         (ddir / "meta.json").write_text(json.dumps(ds.to_dict(), indent=2))
         return ds
@@ -134,24 +144,45 @@ class DatasetRegistry:
             con.unregister("_upload_df")
 
     # ------------------------------------------------------------------ query
-    def get(self, dataset_id: str) -> Dataset:
+    def get(self, dataset_id: str, owner: str | None = None) -> Dataset:
+        """Load a dataset; with ``owner`` set, another visitor's dataset is reported as not found."""
         meta = self._dir(dataset_id) / "meta.json"
         if not meta.exists():
             raise DatasetError(f"Dataset {dataset_id} not found")
-        return Dataset(**json.loads(meta.read_text()))
+        ds = Dataset(**json.loads(meta.read_text()))
+        if owner is not None and ds.owner != owner:
+            raise DatasetError(f"Dataset {dataset_id} not found")
+        return ds
 
-    def list(self) -> list[Dataset]:
+    def list(self, owner: str | None = None) -> list[Dataset]:
         out = []
         for meta in self.root.glob("*/meta.json"):
             try:
-                out.append(Dataset(**json.loads(meta.read_text())))
+                ds = Dataset(**json.loads(meta.read_text()))
             except Exception:
                 continue
+            if owner is None or ds.owner == owner:
+                out.append(ds)
         return sorted(out, key=lambda d: d.created_at, reverse=True)
 
-    def delete(self, dataset_id: str) -> None:
-        ddir = self._dir(dataset_id)
-        if not ddir.exists():
-            raise DatasetError(f"Dataset {dataset_id} not found")
+    def delete(self, dataset_id: str, owner: str | None = None) -> None:
+        self.get(dataset_id, owner)  # ownership check
         with self._lock:
-            shutil.rmtree(ddir)
+            shutil.rmtree(self._dir(dataset_id))
+
+    def purge_older_than(self, hours: float) -> int:
+        """Delete datasets created more than ``hours`` ago. Returns how many were removed."""
+        if hours <= 0:
+            return 0
+        cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+        removed = 0
+        for ds in self.list():
+            try:
+                created = datetime.fromisoformat(ds.created_at).timestamp()
+            except ValueError:
+                created = 0
+            if created < cutoff:
+                with self._lock:
+                    shutil.rmtree(self._dir(ds.id), ignore_errors=True)
+                removed += 1
+        return removed

@@ -104,11 +104,17 @@ def validate_sql(sql: str) -> str:
     return cleaned
 
 
+def _memory_limit() -> str:
+    from .config import get_settings
+
+    return get_settings().duckdb_memory_limit
+
+
 def connect_readonly(db_path: Path) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(
         str(db_path),
         read_only=True,
-        config={"enable_external_access": False, "threads": 2, "memory_limit": "1GB"},
+        config={"enable_external_access": False, "threads": 2, "memory_limit": _memory_limit()},
     )
     return con
 

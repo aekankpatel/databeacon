@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import threading
 import traceback
@@ -36,16 +37,19 @@ class RunStore:
                 id TEXT PRIMARY KEY, dataset_id TEXT NOT NULL, question TEXT NOT NULL, status TEXT NOT NULL,
                 created_at TEXT NOT NULL, finished_at TEXT, result TEXT)""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_runs_dataset ON runs(dataset_id, created_at)")
+            cols = {r[1] for r in c.execute("PRAGMA table_info(runs)")}
+            if "owner" not in cols:  # migrate older stores
+                c.execute("ALTER TABLE runs ADD COLUMN owner TEXT NOT NULL DEFAULT 'local'")
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 
-    def create(self, run_id: str, dataset_id: str, question: str) -> None:
+    def create(self, run_id: str, dataset_id: str, question: str, owner: str = "local") -> None:
         with self._lock, self._conn() as c:
-            c.execute("INSERT INTO runs (id, dataset_id, question, status, created_at) VALUES (?,?,?,?,?)",
-                      (run_id, dataset_id, question, "running", _now()))
+            c.execute("INSERT INTO runs (id, dataset_id, question, status, created_at, owner) VALUES (?,?,?,?,?,?)",
+                      (run_id, dataset_id, question, "running", _now(), owner))
 
     def finish(self, run_id: str, status: str, result: dict[str, Any]) -> None:
         with self._lock, self._conn() as c:
@@ -61,15 +65,33 @@ class RunStore:
         out["result"] = json.loads(out["result"]) if out["result"] else None
         return out
 
-    def list(self, dataset_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    def list(self, dataset_id: str | None = None, limit: int = 50, owner: str | None = None) -> list[dict[str, Any]]:
         q = "SELECT id, dataset_id, question, status, created_at, finished_at FROM runs"
-        args: tuple = ()
+        conds, args_l = [], []
         if dataset_id:
-            q += " WHERE dataset_id=?"
-            args = (dataset_id,)
+            conds.append("dataset_id=?")
+            args_l.append(dataset_id)
+        if owner is not None:
+            conds.append("owner=?")
+            args_l.append(owner)
+        if conds:
+            q += " WHERE " + " AND ".join(conds)
+        args: tuple = tuple(args_l)
         q += " ORDER BY created_at DESC LIMIT ?"
         with self._conn() as c:
             return [dict(r) for r in c.execute(q, args + (limit,)).fetchall()]
+
+    def purge_older_than(self, hours: float) -> list[str]:
+        if hours <= 0:
+            return []
+        from datetime import timedelta
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        with self._lock, self._conn() as c:
+            ids = [r[0] for r in c.execute("SELECT id FROM runs WHERE created_at < ? AND status != 'running'",
+                                           (cutoff,))]
+            c.execute("DELETE FROM runs WHERE created_at < ? AND status != 'running'", (cutoff,))
+        return ids
 
     def mark_interrupted(self) -> None:
         with self._lock, self._conn() as c:
@@ -101,10 +123,10 @@ class RunManager:
         self.tasks: dict[str, asyncio.Task] = {}
         self._sem = asyncio.Semaphore(max_concurrent)
 
-    def start(self, dataset_id: str, question: str, clarification: str | None = None) -> str:
-        ds = self.registry.get(dataset_id)  # raises if missing
+    def start(self, dataset_id: str, question: str, clarification: str | None = None, owner: str | None = None) -> str:
+        ds = self.registry.get(dataset_id, owner)  # raises if missing or not the caller's
         run_id = uuid.uuid4().hex[:12]
-        self.store.create(run_id, dataset_id, question)
+        self.store.create(run_id, dataset_id, question, owner or ds.owner)
         rec = RunRecorder(run_id)
         self.recorders[run_id] = rec
         self.tasks[run_id] = asyncio.create_task(self._execute(run_id, ds.id, ds.name, question, rec, clarification))
@@ -139,8 +161,10 @@ class RunManager:
             except Exception as exc:  # noqa: BLE001
                 while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
                     exc = exc.exceptions[0]  # surface the real cause, not the task-group wrapper
-                rec.log("error", "run_failed", status="error", error=f"{type(exc).__name__}: {exc}",
-                        output=traceback.format_exc()[-2000:])
+                logging.getLogger("databeacon.runs").exception("run %s failed", run_id)
+                rec.log("error", "run_failed", status="error", error=f"{type(exc).__name__}: {str(exc)[:300]}",
+                        # internals (tracebacks, paths) stay in the server log on public deployments
+                        **({} if self.s.public_mode else {"output": traceback.format_exc()[-2000:]}))
                 state.setdefault("errors", []).append(f"{type(exc).__name__}: {exc}")
             result = self._result(state, rec)
             self.store.finish(run_id, status, result)
