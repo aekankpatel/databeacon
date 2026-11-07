@@ -137,7 +137,7 @@ async def main() -> int:
     generate().to_csv(csv, index=False)
     registry = DatasetRegistry(settings.datasets_dir)
     ds = registry.ingest_file(csv, name="E-commerce orders")
-    usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+    usage_db = NeuronBudget.default()
     budget_meta: dict[str, Any] = {}
     if args.mode == "live":
         if os.environ.get("DATABEACON_FALLBACK_PROVIDER") and not args.allow_fallback:
@@ -152,7 +152,7 @@ async def main() -> int:
             # lower the guard's daily limit for this process: no call may push today's total past it
             hard_limit = min(hard_limit, used0 + max(0.0, args.max_neurons - args.prior_spend))
             os.environ["DATABEACON_CLOUDFLARE_DAILY_NEURONS"] = str(hard_limit)
-            usage_db = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+            usage_db = NeuronBudget.default()
         budget_meta = {"neurons_used_today_before": round(used0, 1), "run_cap": args.max_neurons,
                        "prior_spend": args.prior_spend,
                        "hard_daily_limit_for_run": hard_limit, "free_allocation": 10_000}

@@ -235,8 +235,8 @@ class ProviderChain:
             if self.budget is not None:
                 token_usage = (getattr(resp, "response_metadata", None) or {}).get("token_usage") or {}
                 reported = token_usage.get("neurons") if isinstance(token_usage, dict) else None
-                self.budget.record(provider, model, u["input_tokens"], u["output_tokens"], reported)
-                self.budget.release(reservation)
+                self.budget.record(provider, model, u["input_tokens"], u["output_tokens"], reported,
+                                   reservation_id=reservation)
             if i > 0:
                 self.shared["fallbacks"] += 1
             self.shared["last"] = {"provider": provider, "model": model}
@@ -256,9 +256,8 @@ def build_chat_model(temperature: float = 0.1, timeout: float = 90.0, model: str
         entries.append((fb, model_for(fb), build_provider_model(fb, temperature, timeout)))
     if budget is None:
         from .budget import NeuronBudget
-        from .config import get_settings
 
-        budget = NeuronBudget(get_settings().data_dir / "llm_usage.sqlite")
+        budget = NeuronBudget.default()
     return ProviderChain(entries, budget)
 
 

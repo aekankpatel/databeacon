@@ -90,6 +90,42 @@ class RateLimiter:
             self._events.clear()
 
 
+class SharedRateLimiter:
+    """Rate limits stored in the shared SQL store (D1 on serverless): one conditional INSERT per hit,
+    so concurrent requests on any number of instances cannot exceed the limit."""
+
+    SCHEMA = [
+        "CREATE TABLE IF NOT EXISTS rate_events (id TEXT PRIMARY KEY, key TEXT NOT NULL, ts REAL NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_rate_events_key_ts ON rate_events(key, ts)",
+    ]
+
+    def __init__(self, store) -> None:
+        self.store = store
+        store.ensure_schema("rate", self.SCHEMA)
+        self._hits = 0
+
+    def hit(self, key: str, limit: int, window_s: float, what: str) -> None:
+        import uuid
+
+        if limit <= 0:
+            return
+        now = time.time()
+        changed = self.store.execute(
+            """INSERT INTO rate_events (id, key, ts) SELECT ?, ?, ?
+               WHERE (SELECT COUNT(*) FROM rate_events WHERE key = ? AND ts > ?) < ?""",
+            (uuid.uuid4().hex, key, now, key, now - window_s, int(limit)))
+        self._hits += 1
+        if self._hits % 200 == 0:
+            self.store.execute("DELETE FROM rate_events WHERE ts < ?", (now - 2 * 86400,))
+        if changed != 1:
+            rows = self.store.query("SELECT MIN(ts) AS t FROM rate_events WHERE key = ? AND ts > ?",
+                                    (key, now - window_s))
+            oldest = rows[0]["t"] if rows and rows[0]["t"] else now
+            retry = int(oldest + window_s - now) + 1
+            raise HTTPException(429, f"Rate limit: at most {limit} {what} per {_human(window_s)}. "
+                                     f"Try again in {_human(retry)}.", headers={"Retry-After": str(max(1, retry))})
+
+
 def _human(seconds: float) -> str:
     seconds = int(seconds)
     if seconds >= 86400:

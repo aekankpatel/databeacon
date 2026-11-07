@@ -102,8 +102,17 @@ async def test_cloudflare_fails_closed(tmp_path):
     cf = Fake("cf")
     with pytest.raises(QuotaExhaustedError):  # no budget configured -> never call Cloudflare
         await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], None).ainvoke([HumanMessage("hi")])
-    budget = NeuronBudget(tmp_path / "u.sqlite")
-    budget.path = tmp_path / "missing_dir" / "u.sqlite"  # ledger unusable
+    from databeacon.storage.base import StorageError
+
+    class BrokenStore:  # e.g. D1 unreachable or over its daily limit
+        kind = "broken"
+
+        def ensure_schema(self, *a):
+            raise StorageError("D1 unreachable")
+
+        query = execute = batch = ensure_schema
+
+    budget = NeuronBudget(store=BrokenStore())  # ledger unusable
     with pytest.raises(QuotaExhaustedError):
         await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], budget).ainvoke([HumanMessage("hi")])
     assert cf.calls == 0

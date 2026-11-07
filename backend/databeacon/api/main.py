@@ -35,6 +35,7 @@ from .security import (
     SECURITY_HEADERS,
     SESSION_HEADER,
     RateLimiter,
+    SharedRateLimiter,
     check_access_code,
     client_ip,
     session_owner,
@@ -70,7 +71,10 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     settings = get_settings()
     setup_tracing()
     registry = manager.registry if manager else DatasetRegistry(settings.datasets_dir)
-    limiter = RateLimiter()
+    limiter = RateLimiter()  # per-instance flood guard (requests/minute): no shared writes per request
+    from ..storage import open_store
+
+    shared_limiter = SharedRateLimiter(open_store("app"))  # analyses and uploads: shared and atomic
     last_cleanup = {"t": 0.0}
 
     def cleanup(mgr: RunManager | None) -> None:
@@ -157,7 +161,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         """LLM usage in the guard's window and the Cloudflare free-tier neuron budget."""
         from ..budget import NeuronBudget
 
-        b = NeuronBudget(settings.data_dir / "llm_usage.sqlite")
+        b = NeuronBudget.default()
         out = b.summary()
         out["remaining_neurons"] = round(b.remaining(), 1)
         out["approx_analyses_left"] = int(b.remaining() // 1000)  # ~700-1,000 neurons per analysis measured
@@ -183,7 +187,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/datasets", status_code=201)
     async def upload_dataset(file: UploadFile = File(...), name: str | None = Form(None),
                              owner: str = Depends(owner_of), ip: str = Depends(ip_of)) -> dict[str, Any]:
-        limiter.hit(f"upload:{ip}", settings.uploads_per_hour, 3600, "uploads")
+        shared_limiter.hit(f"upload:{ip}", settings.uploads_per_hour, 3600, "uploads")
         _quota(owner)
         filename = Path(file.filename or "upload.csv").name[:120]
         limit = int(settings.max_upload_mb * 1024 * 1024)
@@ -209,7 +213,7 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         existing = next((d for d in registry.list(owner) if d.name == SAMPLE_NAME), None)
         if existing:  # one sample copy per session
             return _public_ds(existing)
-        limiter.hit(f"upload:{ip}", settings.uploads_per_hour, 3600, "uploads")
+        shared_limiter.hit(f"upload:{ip}", settings.uploads_per_hour, 3600, "uploads")
         _quota(owner)
         if not SAMPLE_CSV.exists():
             from sample_data.generate_ecommerce import generate
@@ -270,8 +274,8 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             registry.get(body.dataset_id, owner)
         except DatasetError as exc:
             raise HTTPException(404, str(exc)) from exc
-        limiter.hit(f"runs-h:{ip}", settings.runs_per_hour, 3600, "analyses")
-        limiter.hit(f"runs-d:{ip}", settings.runs_per_day, 86400, "analyses")
+        shared_limiter.hit(f"runs-h:{ip}", settings.runs_per_hour, 3600, "analyses")
+        shared_limiter.hit(f"runs-d:{ip}", settings.runs_per_day, 86400, "analyses")
         run_id = runs(request).start(body.dataset_id, body.question, body.clarification, owner=owner)
         return {"run_id": run_id, "status": "running"}
 

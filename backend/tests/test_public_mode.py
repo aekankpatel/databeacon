@@ -28,7 +28,11 @@ def public_client(registry, monkeypatch, llm_factory=scripted_ecommerce_llm, **e
     reset_settings_cache()
     try:
         settings = get_settings()
-        with TestClient(create_app(RunManager(registry, settings, llm_factory=llm_factory))) as client:
+        app = create_app(RunManager(registry, settings, llm_factory=llm_factory))
+        from databeacon.storage import open_store
+
+        open_store("app").execute("DELETE FROM rate_events")  # limits are durable: isolate each test
+        with TestClient(app) as client:
             yield client
     finally:
         for k in ["PUBLIC_MODE", *env]:
