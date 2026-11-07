@@ -62,6 +62,7 @@ class AgentState(TypedDict, total=False):
     report: dict[str, Any]
     errors: list[str]
     stop_reason: str
+    deadline_at: float | None
 
 
 def normalize_call(name: str, args: dict[str, Any]) -> str:
@@ -118,6 +119,17 @@ class AnalystAgent:
         return await self.graph.ainvoke(state, {"recursion_limit": 200})
 
     # ---------------------------------------------------------------- helpers
+    @staticmethod
+    def _time_left(state: AgentState) -> float:
+        """Seconds left before the run's deadline (inf when there is none)."""
+        import time as _t
+
+        d = state.get("deadline_at")
+        return float("inf") if not d else d - _t.time()
+
+    # keep enough time to synthesize, verify and write the report before a serverless time limit
+    DEADLINE_RESERVE_S = 75
+
     def _ctx(self, state: AgentState) -> dict[str, Any]:
         return {"dataset_id": state["dataset_id"]}
 
@@ -339,6 +351,11 @@ class AnalystAgent:
         msgs[0] = self._system_act(state, self.s.max_steps_per_iteration - state.get("steps_in_iteration", 0))
         budget_left = state["tool_calls"] < self.s.max_tool_calls
         step_left = state.get("steps_in_iteration", 0) < self.s.max_steps_per_iteration
+        if self._time_left(state) < self.DEADLINE_RESERVE_S:
+            self.rec.log("decision", "deadline_reached", output={
+                "seconds_left": round(self._time_left(state)), "action": "stop investigating; write the answer"})
+            return {"messages": msgs + [AIMessage("Time limit approaching: stop and answer with the evidence collected.")],
+                    "stop_reason": "time limit approaching"}
         if not (budget_left and step_left):
             self.rec.log("decision", "budget_reached", output={"tool_calls": state["tool_calls"],
                                                                "steps_in_iteration": state.get("steps_in_iteration")})
@@ -438,11 +455,13 @@ class AnalystAgent:
             ev["output"] = refl.model_dump()
         reflections = state["reflections"] + [{"iteration": state["iteration"], **refl.model_dump()}]
         self.rec.publish({"kind": "reflection", "reflection": reflections[-1]})
-        can_continue = state["iteration"] < self.s.max_iterations and state["tool_calls"] < self.s.max_tool_calls
+        can_continue = (state["iteration"] < self.s.max_iterations and state["tool_calls"] < self.s.max_tool_calls
+                        and self._time_left(state) > self.DEADLINE_RESERVE_S + 30)
         stop_reason = ""
         if refl.sufficient or not can_continue:
             stop_reason = "evidence sufficient" if refl.sufficient else (
-                "max iterations reached" if state["iteration"] >= self.s.max_iterations else "tool budget exhausted")
+                "max iterations reached" if state["iteration"] >= self.s.max_iterations else
+                "tool budget exhausted" if state["tool_calls"] >= self.s.max_tool_calls else "time limit approaching")
             self.rec.log("decision", "stop_investigation", output={"reason": stop_reason, "iteration": state["iteration"],
                                                                    "confidence": refl.confidence})
         return {"reflections": reflections, "stop_reason": stop_reason}
@@ -504,9 +523,10 @@ class AnalystAgent:
         misaligned = state["alignment"]["status"] == "misaligned"
         unsupported = state["verification"]["hallucination_rate"] > 0
         tools_left = self.s.max_tool_calls - state["tool_calls"]
-        if misaligned and state.get("realign_attempts", 0) < 1 and tools_left >= 2:
+        time_left = self._time_left(state)
+        if misaligned and state.get("realign_attempts", 0) < 1 and tools_left >= 2 and time_left > 120:
             return "realign"  # wrong question answered: collect the right evidence, not just reword
-        if (misaligned or unsupported) and state["verify_attempts"] < 2:
+        if (misaligned or unsupported) and state["verify_attempts"] < 2 and time_left > 45:
             self.rec.log("decision", "revise_answer", output={"alignment": state["alignment"]["issues"],
                                                               "unsupported": state["verification"]["unsupported"]})
             return "synthesize"

@@ -58,6 +58,18 @@ class Settings:
     trust_proxy: bool = field(default_factory=lambda: _env("TRUST_PROXY", "0").lower() in {"1", "true", "yes"})
     # optional shared code required to start live (LLM-spending) analyses
     demo_access_code: str = field(default_factory=lambda: _env("DEMO_ACCESS_CODE", ""))
+    # Run execution: "background" (long-lived server) or "inline" (serverless: the run lives inside the
+    # request that started it). Defaults to inline on Vercel.
+    execution_mode: str = field(default_factory=lambda: _env(
+        "EXECUTION", "inline" if os.environ.get("VERCEL") else "background").lower())
+    # wall-clock limit for one investigation (0 = none); keep below the platform's function limit
+    run_deadline_s: float = field(default_factory=lambda: float(_env(
+        "RUN_DEADLINE_S", "270" if (_env("EXECUTION", "inline" if os.environ.get("VERCEL") else "background")
+                                    .lower() == "inline") else "0")))
+    # extra seconds after the deadline before the run is forcibly stopped (the agent winds down itself first)
+    run_deadline_grace_s: float = field(default_factory=lambda: float(_env("RUN_DEADLINE_GRACE_S", "20")))
+    # a running investigation whose heartbeat is older than this is considered interrupted
+    run_stale_s: float = field(default_factory=lambda: float(_env("RUN_STALE_S", "120")))
     expose_docs: bool = field(default_factory=lambda: _env("EXPOSE_DOCS", _public("0", "1")) == "1")
 
     # MCP transport: "inprocess" (default) or "stdio" (servers run as subprocesses)

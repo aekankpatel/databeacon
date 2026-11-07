@@ -63,6 +63,8 @@ class RunRecorder:
         self.llm_calls = 0
         self.served_by: dict[str, int] = {}
         self.by_stage: dict[str, dict[str, int]] = {}
+        self.history: list[dict[str, Any]] = []  # every published message, in order
+        self.sink: Any = None  # optional callable receiving each message (persistence)
         self.started = time.perf_counter()
 
     # --------------------------------------------------------------- pub/sub
@@ -78,6 +80,10 @@ class RunRecorder:
             self._subscribers.remove(q)
 
     def publish(self, message: dict[str, Any]) -> None:
+        message = json.loads(json.dumps(message, default=str))  # snapshot: events mutate while running
+        self.history.append(message)
+        if self.sink is not None:
+            self.sink(message)
         for q in list(self._subscribers):
             q.put_nowait(message)
 

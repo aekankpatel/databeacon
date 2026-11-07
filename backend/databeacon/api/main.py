@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -53,6 +53,8 @@ class RunRequest(BaseModel):
     question: str = Field(min_length=5, max_length=2000)
     clarification: str | None = Field(default=None, max_length=500,
                                       description="Answer to a clarification request, e.g. 'Q4 2025'")
+    rerun_of: str | None = Field(default=None, pattern=r"^[0-9a-f]{12}$",
+                                 description="Start a new investigation for an interrupted one (no resume)")
 
     @field_validator("question")
     @classmethod
@@ -61,6 +63,38 @@ class RunRequest(BaseModel):
         if len(v) < 5:
             raise ValueError("question is too short")
         return v
+
+
+class PersistentEventStream(Response):
+    """An SSE response that keeps running after the client disconnects.
+
+    Starlette's StreamingResponse cancels the generator when the client goes away, which in inline mode
+    would kill the investigation. This response stops *sending* instead and keeps consuming the
+    generator, so the run still finishes and is saved, and the user can reconnect to it."""
+
+    media_type = "text/event-stream"
+
+    def __init__(self, gen):
+        super().__init__(status_code=200, media_type=self.media_type,
+                         headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
+        self.gen = gen
+
+    async def __call__(self, scope, receive, send):
+        connected = True
+
+        async def _send(message):
+            nonlocal connected
+            if not connected:
+                return
+            try:
+                await send(message)
+            except Exception:  # noqa: BLE001 - client gone: keep running, stop sending
+                connected = False
+
+        await _send({"type": "http.response.start", "status": self.status_code, "headers": self.raw_headers})
+        async for chunk in self.gen:
+            await _send({"type": "http.response.body", "body": chunk.encode(), "more_body": True})
+        await _send({"type": "http.response.body", "body": b"", "more_body": False})
 
 
 class SQLRequest(BaseModel):
@@ -85,6 +119,12 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             return
         n = registry.purge_older_than(settings.data_ttl_hours)
         ids = mgr.store.purge_older_than(settings.data_ttl_hours) if mgr else []
+        try:
+            from ..budget import NeuronBudget
+
+            NeuronBudget.default().purge()
+        except Exception:  # noqa: BLE001 - retention is best effort
+            pass
         for rid in ids:
             (settings.reports_dir / f"{rid}.pdf").unlink(missing_ok=True)
         if n or ids:
@@ -268,18 +308,32 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             return hub.catalog()
 
     # ------------------------------------------------------------------ runs
+    def _sse(msg: dict[str, Any]) -> str:
+        return f"data: {json.dumps(msg, default=str)}\n\n"
+
     @app.post("/api/runs", status_code=202)
     async def start_run(body: RunRequest, request: Request, owner: str = Depends(owner_of),
-                        ip: str = Depends(ip_of)) -> dict[str, Any]:
+                        ip: str = Depends(ip_of)):
         check_access_code(request, settings)
         try:
             registry.get(body.dataset_id, owner)
         except DatasetError as exc:
             raise HTTPException(404, str(exc)) from exc
+        if body.rerun_of:
+            own_run(request, body.rerun_of, owner)
         shared_limiter.hit(f"runs-h:{ip}", settings.runs_per_hour, 3600, "analyses")
         shared_limiter.hit(f"runs-d:{ip}", settings.runs_per_day, 86400, "analyses")
-        run_id = runs(request).start(body.dataset_id, body.question, body.clarification, owner=owner)
-        return {"run_id": run_id, "status": "running"}
+        mgr = runs(request)
+        if settings.execution_mode == "inline":
+            # serverless: the investigation lives inside this request; its events stream back as it runs
+            async def gen():
+                async for msg in mgr.stream(body.dataset_id, body.question, body.clarification, owner=owner,
+                                            rerun_of=body.rerun_of):
+                    yield _sse(msg)
+
+            return PersistentEventStream(gen())
+        run_id = mgr.start(body.dataset_id, body.question, body.clarification, owner=owner, rerun_of=body.rerun_of)
+        return JSONResponse({"run_id": run_id, "status": "running", "execution": "background"}, status_code=202)
 
     @app.get("/api/runs")
     async def list_runs(request: Request, dataset_id: str | None = None,
@@ -289,27 +343,28 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str, request: Request, owner: str = Depends(owner_of)) -> dict[str, Any]:
         own_run(request, run_id, owner)
-        row = runs(request).get(run_id)
-        row.pop("owner", None)
+        row = await asyncio.to_thread(runs(request).get, run_id)
+        for k in ("owner", "heartbeat_at", "deadline_at"):
+            row.pop(k, None)
         return row
 
     @app.get("/api/runs/{run_id}/events")
     async def run_events(run_id: str, request: Request, owner: str = Depends(owner_of)) -> StreamingResponse:
-        row = own_run(request, run_id, owner)
+        """Follow a run. In the process executing it: live. Anywhere else: replay the saved event log and
+        poll for new events ("reconnected"); if the executor stopped, report "interrupted" - saved
+        progress only, the investigation cannot continue."""
+        own_run(request, run_id, owner)
         mgr = runs(request)
-        rec = mgr.recorders.get(run_id)
+        rec, task = mgr.recorders.get(run_id), mgr.tasks.get(run_id)
 
-        async def stream():
-            if rec is None:  # run from a previous server process: nothing live to stream
-                yield f"data: {json.dumps({'kind': 'done', 'status': row['status']})}\n\n"
-                return
+        async def live():
             q = rec.subscribe()  # replays every event recorded so far
             try:
-                task = mgr.tasks.get(run_id)
+                yield _sse({"kind": "connection", "mode": "live"})
                 if task is None or task.done():
                     while not q.empty():
-                        yield f"data: {json.dumps(q.get_nowait(), default=str)}\n\n"
-                    yield f"data: {json.dumps({'kind': 'done', 'status': mgr.store.get(run_id)['status']})}\n\n"
+                        yield _sse(q.get_nowait())
+                    yield _sse({"kind": "done", "status": mgr.store.get(run_id)["status"]})
                     return
                 while not await request.is_disconnected():
                     try:
@@ -317,24 +372,49 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
                     except TimeoutError:
                         yield ": keep-alive\n\n"
                         continue
-                    yield f"data: {json.dumps(msg, default=str)}\n\n"
+                    yield _sse(msg)
                     if msg.get("kind") == "done":
                         break
             finally:
                 rec.unsubscribe(q)
 
-        return StreamingResponse(stream(), media_type="text/event-stream",
+        async def from_store():
+            seq = -1
+            yield _sse({"kind": "connection", "mode": "reconnected"})
+            idle = 0.0
+            while not await request.is_disconnected():
+                new = await asyncio.to_thread(mgr.store.events, run_id, seq)
+                for event_seq, msg in new:
+                    seq = event_seq  # cursor for the next poll
+                    yield _sse(msg)
+                    if msg.get("kind") == "done":
+                        return
+                row = await asyncio.to_thread(mgr.get, run_id)  # also detects a stale executor
+                if row["status"] != "running":
+                    if row["status"] == "interrupted":
+                        yield _sse({"kind": "interrupted", "interruption": row.get("interruption")})
+                    yield _sse({"kind": "done", "status": row["status"]})
+                    return
+                idle = 0.0 if new else idle + 1.5
+                if idle >= 15:
+                    yield ": keep-alive\n\n"
+                    idle = 0.0
+                await asyncio.sleep(1.5)
+
+        local = rec is not None and task is not None
+        return StreamingResponse(live() if local else from_store(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/api/runs/{run_id}/report.pdf")
-    async def run_report(run_id: str, request: Request, owner: str = Depends(owner_of)) -> FileResponse:
+    async def run_report(run_id: str, request: Request, owner: str = Depends(owner_of)) -> Response:
         if not re.fullmatch(r"[0-9a-f]{12}", run_id):
             raise HTTPException(400, "invalid run id")
         own_run(request, run_id, owner)
-        path = settings.reports_dir / f"{run_id}.pdf"
-        if not path.exists():
+        data = await asyncio.to_thread(runs(request).report_bytes, run_id)
+        if not data:
             raise HTTPException(404, "report not available")
-        return FileResponse(path, media_type="application/pdf", filename=f"databeacon-report-{run_id}.pdf")
+        return Response(data, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="databeacon-report-{run_id}.pdf"'})
 
     # ----------------------------------------------------------------- evals
     @app.get("/api/evals/latest")
