@@ -7,15 +7,20 @@ interface Props {
   selected: string | null;
   onSelect: (id: string) => void;
   onChanged: (select?: string) => void;
+  maxUploadMb?: number;
 }
 
-export function Sidebar({ datasets, selected, onSelect, onChanged }: Props) {
+export function Sidebar({ datasets, selected, onSelect, onChanged, maxUploadMb }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
   async function upload(file: File) {
+    if (maxUploadMb && file.size > maxUploadMb * 1024 * 1024) {
+      setError(`That file is ${(file.size / 1048576).toFixed(1)} MB; the limit here is ${maxUploadMb} MB.`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -68,7 +73,7 @@ export function Sidebar({ datasets, selected, onSelect, onChanged }: Props) {
         {busy ? "Loading…" : (
           <>
             <strong>Upload a dataset</strong>
-            <div className="small">CSV, TSV, Parquet, JSON or XLSX</div>
+            <div className="small">CSV, TSV, Parquet, JSON or XLSX{maxUploadMb ? ` · max ${maxUploadMb} MB` : ""}</div>
           </>
         )}
         <input

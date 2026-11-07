@@ -227,4 +227,15 @@ export interface Health {
   version: string;
   llm: { provider: string; model: string; configured: boolean };
   mcp_transport: string;
+  public_mode?: boolean;
+  access_code_required?: boolean;
+  limits?: {
+    max_upload_mb: number;
+    max_rows: number;
+    max_columns: number;
+    max_datasets_per_session: number;
+    runs_per_hour: number;
+    runs_per_day: number;
+    data_ttl_hours: number;
+  };
 }

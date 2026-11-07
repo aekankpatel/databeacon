@@ -211,3 +211,5 @@ table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .dataset .row { flex-wrap: nowrap; }
 .dataset .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.footer { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--border); }
+.footer a { color: var(--muted); text-decoration: underline; }
