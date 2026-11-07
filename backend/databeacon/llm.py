@@ -121,7 +121,19 @@ def build_provider_model(provider: str, temperature: float = 0.1, timeout: float
     if provider == "scripted":
         from .agent.testing import scripted_ecommerce_llm
 
-        return scripted_ecommerce_llm()
+        llm = scripted_ecommerce_llm()
+        delay = float(os.environ.get("DATABEACON_SCRIPTED_DELAY_S", "0") or 0)
+        if delay > 0:  # demo/testing only: make offline runs take realistic time
+            import time as _time
+
+            real = llm.responder
+
+            def slow(messages, tools_bound):
+                _time.sleep(delay)
+                return real(messages, tools_bound)
+
+            llm.responder = slow
+        return llm
     model = model or model_for(provider)
     if provider == "cloudflare":
         account = os.environ.get("CLOUDFLARE_ACCOUNT_ID")

@@ -172,6 +172,7 @@ def test_inline_api_streams_and_survives_client_disconnect(registry, monkeypatch
             # read only the first two events, then hang up
             with c.stream("POST", "/api/runs", json={"dataset_id": ds["id"], "question": Q}) as r:
                 assert r.headers["content-type"].startswith("text/event-stream")
+                assert "content-length" not in r.headers  # a fixed length breaks streaming on real servers
                 lines = []
                 for line in r.iter_lines():
                     if line.startswith("data: "):

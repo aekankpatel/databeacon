@@ -66,7 +66,7 @@ class RunRequest(BaseModel):
         return v
 
 
-class PersistentEventStream(Response):
+class PersistentEventStream(StreamingResponse):
     """An SSE response that keeps running after the client disconnects.
 
     Starlette's StreamingResponse cancels the generator when the client goes away, which in inline mode
@@ -76,7 +76,8 @@ class PersistentEventStream(Response):
     media_type = "text/event-stream"
 
     def __init__(self, gen):
-        super().__init__(status_code=200, media_type=self.media_type,
+        # StreamingResponse: chunked transfer, no Content-Length (a fixed length breaks real servers)
+        super().__init__(gen, status_code=200, media_type=self.media_type,
                          headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
         self.gen = gen
 

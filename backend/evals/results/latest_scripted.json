@@ -1,6 +1,6 @@
 {
   "meta": {
-    "timestamp": "2026-11-07T06:53:43+00:00",
+    "timestamp": "2026-11-07T07:05:51+00:00",
     "mode": "scripted",
     "provider": "scripted",
     "model": "scripted",
@@ -26,8 +26,8 @@
     "sql_validity": 0.584,
     "tool_selection_f1": 1.0,
     "hallucination_rate": 0.0,
-    "avg_latency_s": 0.94,
-    "avg_total_tokens": 25760.5,
+    "avg_latency_s": 1.045,
+    "avg_total_tokens": 25761.5,
     "avg_tool_calls": 8.5,
     "error_recovery_rate": 1.0,
     "scorer_calibration": 1.0,
@@ -85,22 +85,22 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 1.24,
-      "total_tokens": 20273,
+      "latency_s": 1.41,
+      "total_tokens": 20278,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
-          "input_tokens": 932,
+          "input_tokens": 933,
           "output_tokens": 197
         },
         "act": {
           "calls": 8,
-          "input_tokens": 11028,
+          "input_tokens": 11031,
           "output_tokens": 172
         },
         "reflect": {
           "calls": 2,
-          "input_tokens": 2907,
+          "input_tokens": 2908,
           "output_tokens": 144
         },
         "synthesize": {
@@ -294,7 +294,7 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.65,
+      "latency_s": 0.67,
       "total_tokens": 29727,
       "tokens_by_stage": {
         "plan": {
@@ -396,17 +396,17 @@
       },
       "hallucination_rate": 0.0,
       "findings_verified": "5/5",
-      "latency_s": 0.64,
-      "total_tokens": 31248,
+      "latency_s": 0.68,
+      "total_tokens": 31245,
       "tokens_by_stage": {
         "plan": {
           "calls": 1,
-          "input_tokens": 933,
+          "input_tokens": 932,
           "output_tokens": 197
         },
         "act": {
           "calls": 12,
-          "input_tokens": 19388,
+          "input_tokens": 19386,
           "output_tokens": 264
         },
         "reflect": {

@@ -12,9 +12,13 @@ const COLORS: Record<string, string> = {
   error: "var(--err)",
 };
 
-export function Timeline({ events, onEvidence }: { events: TimelineEvent[]; onEvidence: (id: string) => void }) {
+export function Timeline({ events, onEvidence, emptyText }: {
+  events: TimelineEvent[]; onEvidence: (id: string) => void; emptyText?: string;
+}) {
   const [open, setOpen] = useState<string | null>(null);
-  if (!events.length) return <div className="empty small">The agent's decisions, tool calls and SQL appear here live.</div>;
+  if (!events.length) {
+    return <div className="empty small">{emptyText ?? "The agent's decisions, tool calls and SQL appear here live."}</div>;
+  }
   return (
     <div className="timeline">
       {events.map((e) => {

@@ -1,4 +1,4 @@
-# DataBeacon evaluation - 2026-11-07T06:53:43+00:00
+# DataBeacon evaluation - 2026-11-07T07:05:51+00:00
 
 Mode: `scripted` · Provider: `scripted` · Model: `scripted` · Budgets: `{'max_iterations': 3, 'max_tool_calls': 24, 'max_steps_per_iteration': 8}`
 
@@ -19,8 +19,8 @@ A case succeeds only if every check passes: primary conclusion (structured answe
 | sql validity | 0.584 |
 | tool selection f1 | 1.0 |
 | hallucination rate | 0.0 |
-| avg latency s | 0.94 |
-| avg total tokens | 25760.5 |
+| avg latency s | 1.045 |
+| avg total tokens | 25761.5 |
 | avg tool calls | 8.5 |
 | error recovery rate | 1.0 |
 | scorer calibration | 1.0 |
@@ -30,7 +30,7 @@ A case succeeds only if every check passes: primary conclusion (structured answe
 
 | Case | Expected | Success | Conclusion | Period | Metric | Grouping | Numbers | Aligned | Halluc. | Tokens |
 |---|---|---|---|---|---|---|---|---|---|---|
-| revenue_decline_attribution | pass | ✅ | pass | pass | pass | pass | pass | pass | 0.0 | 20273 |
+| revenue_decline_attribution | pass | ✅ | pass | pass | pass | pass | pass | pass | 0.0 | 20278 |
 | calibration_wrong_quarter | fail | ❌ | fail | fail | pass | pass | fail | fail | 0.0 | 29443 |
 | calibration_wrong_conclusion | fail | ❌ | fail | pass | pass | pass | pass | fail | 0.0 | 29727 |
-| calibration_self_corrects | pass | ✅ | pass | pass | pass | pass | pass | pass | 0.0 | 31248 |
+| calibration_self_corrects | pass | ✅ | pass | pass | pass | pass | pass | pass | 0.0 | 31245 |

@@ -5,11 +5,13 @@ import { DataView } from "./components/DataView";
 import { EvalsView } from "./components/EvalsView";
 import { Sidebar } from "./components/Sidebar";
 import { ToolsView } from "./components/ToolsView";
+import { ReplayList, ReplayView } from "./components/ReplayView";
 import { Welcome } from "./components/Welcome";
 import type { Dataset, Health } from "./types";
 
-type Tab = "analyze" | "data" | "tools" | "evals";
-const TABS: [Tab, string][] = [["analyze", "Analyze"], ["data", "Data"], ["tools", "MCP Tools"], ["evals", "Evaluation"]];
+type Tab = "analyze" | "replays" | "data" | "tools" | "evals";
+const TABS: [Tab, string][] = [["analyze", "Analyze"], ["replays", "Recorded"], ["data", "Data"], ["tools", "MCP Tools"],
+  ["evals", "Evaluation"]];
 const REPO_URL = import.meta.env.VITE_REPO_URL ?? "https://github.com/aekankpatel/databeacon";
 
 export default function App() {
@@ -20,6 +22,11 @@ export default function App() {
   const [connecting, setConnecting] = useState(true);
   const [offline, setOffline] = useState(false);
   const [left, setLeft] = useState<number | null>(null);
+  const [replayId, setReplayId] = useState<string | null>(null);
+  const openReplay = (id: string) => {
+    setReplayId(id);
+    setTab("replays");
+  };
 
   const refresh = useCallback(async (select?: string) => {
     try {
@@ -106,8 +113,24 @@ export default function App() {
               CLOUDFLARE_API_TOKEN) or GROQ_API_KEY in the backend environment and restart.
             </div>
           )}
-          {needsDataset && !dataset ? (
-            <Welcome health={health} onSample={async () => {
+          {health?.replay_only && tab === "analyze" && (
+            <div className="card small" style={{ marginBottom: 14 }}>
+              Live AI analyses are switched off on this deployment. Explore the recorded investigations below.
+            </div>
+          )}
+          {tab === "replays" ? (
+            replayId ? <ReplayView id={replayId} onBack={() => setReplayId(null)} />
+              : (
+                <div className="stack">
+                  <div className="card small">
+                    Real investigations recorded with Cloudflare Workers AI. Watching them uses no AI budget, so they
+                    are always available, even when today's free AI allowance is used up.
+                  </div>
+                  <ReplayList onOpen={openReplay} />
+                </div>
+              )
+          ) : needsDataset && !dataset ? (
+            <Welcome health={health} onReplay={openReplay} onSample={async () => {
               const ds = await api.loadSample();
               await refresh(ds.id);
               setTab("analyze");

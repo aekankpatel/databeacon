@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, type StreamMessage } from "../api";
 import { fmtNum } from "../format";
 import type {
   Alignment, Chart, Clarification, Dataset, Evidence, Plan, Reflection, Run, RunSummary, TaskSpec, TimelineEvent,
@@ -34,7 +34,8 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
   const [history, setHistory] = useState<RunSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<Evidence | null>(null);
-  const esRef = useRef<EventSource | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [connection, setConnection] = useState<"live" | "reconnected" | "interrupted" | null>(null);
 
   const loadHistory = useCallback(() => {
     api.runs(dataset.id).then(setHistory).catch(() => setHistory([]));
@@ -45,68 +46,124 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
     setRun(null);
     setRunId(null);
     setLive(emptyLive());
-    return () => esRef.current?.close();
+    return () => abortRef.current?.abort();
   }, [dataset.id, loadHistory]);
+
+  // One handler for every stream: the inline POST response, live SSE and saved-progress replays.
+  // Replays resend earlier messages, so charts/evidence/reflections are de-duplicated by id.
+  const handle = useCallback((m: StreamMessage) => {
+    if (m.kind === "event") {
+      setLive((l) => {
+        const idx = l.events.findIndex((e) => e.id === m.event.id);
+        const events = idx >= 0 ? l.events.map((e, i) => (i === idx ? m.event : e)) : [...l.events, m.event];
+        return { ...l, events };
+      });
+    } else if (m.kind === "plan") setLive((l) => ({ ...l, plan: m.plan }));
+    else if (m.kind === "reflection")
+      setLive((l) => (l.reflections.some((r) => r.iteration === m.reflection.iteration) ? l
+        : { ...l, reflections: [...l.reflections, m.reflection] }));
+    else if (m.kind === "chart")
+      setLive((l) => (l.charts.some((c) => c.chart_id === m.chart.chart_id) ? l : { ...l, charts: [...l.charts, m.chart] }));
+    else if (m.kind === "evidence")
+      setLive((l) => (l.evidence.some((e) => e.id === m.evidence.id) ? l : { ...l, evidence: [...l.evidence, m.evidence] }));
+    else if (m.kind === "connection") setConnection(m.mode);
+    else if (m.kind === "interrupted") setConnection("interrupted");
+  }, []);
+
+  const finish = useCallback(async (id: string) => {
+    const full = await api.run(id);
+    setRun(full);
+    if (full.status === "interrupted") setConnection("interrupted");
+    setLive((l) => ({
+      ...l,
+      events: full.result?.timeline?.length ? full.result.timeline : l.events,
+      charts: full.result?.charts?.length ? full.result.charts : l.charts,
+      evidence: full.result?.evidence?.length ? full.result.evidence : l.evidence,
+      plan: full.result?.plan ?? l.plan,
+      reflections: full.result?.reflections?.length ? full.result.reflections : l.reflections,
+    }));
+    loadHistory();
+  }, [loadHistory]);
+
+  /** Follow an existing run: live if this server executes it, otherwise its saved progress. */
+  const follow = useCallback(async (id: string) => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    try {
+      await api.followRun(id, (m) => {
+        handle(m);
+        if (m.kind === "done") finish(id);
+      }, ctrl.signal);
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") api.run(id).then(setRun).catch(() => undefined);
+    }
+  }, [handle, finish]);
 
   const openRun = useCallback(
     async (id: string) => {
-      esRef.current?.close();
+      abortRef.current?.abort();
       setRunId(id);
       setError(null);
+      setConnection(null);
       const r = await api.run(id);
       setRun(r);
-      if (r.status !== "running") {
-        setLive({
-          events: r.result?.timeline ?? [],
-          plan: r.result?.plan,
-          reflections: r.result?.reflections ?? [],
-          charts: r.result?.charts ?? [],
-          evidence: r.result?.evidence ?? [],
-        });
-        return;
+      setLive({
+        events: r.result?.timeline ?? [],
+        plan: r.result?.plan,
+        reflections: r.result?.reflections ?? [],
+        charts: r.result?.charts ?? [],
+        evidence: r.result?.evidence ?? [],
+      });
+      if (r.status === "interrupted") setConnection("interrupted");
+      if (r.status === "running") {
+        setConnection(r.connection ?? "reconnected");
+        follow(id);
       }
-      setLive(emptyLive());
-      const es = new EventSource(api.eventsUrl(id));
-      esRef.current = es;
-      es.onmessage = (msg) => {
-        const m = JSON.parse(msg.data);
-        if (m.kind === "event") {
-          setLive((l) => {
-            const idx = l.events.findIndex((e) => e.id === m.event.id);
-            const events = idx >= 0 ? l.events.map((e, i) => (i === idx ? m.event : e)) : [...l.events, m.event];
-            return { ...l, events };
-          });
-        } else if (m.kind === "plan") setLive((l) => ({ ...l, plan: m.plan }));
-        else if (m.kind === "reflection") setLive((l) => ({ ...l, reflections: [...l.reflections, m.reflection] }));
-        else if (m.kind === "chart") setLive((l) => ({ ...l, charts: [...l.charts, m.chart] }));
-        else if (m.kind === "evidence") setLive((l) => ({ ...l, evidence: [...l.evidence, m.evidence] }));
-        else if (m.kind === "done") {
-          es.close();
-          api.run(id).then((full) => {
-            setRun(full);
-            setLive((l) => ({ ...l, events: full.result?.timeline ?? l.events, charts: full.result?.charts ?? l.charts,
-              evidence: full.result?.evidence ?? l.evidence }));
-            loadHistory();
-          });
-        }
-      };
-      es.onerror = () => {
-        es.close();
-        api.run(id).then(setRun).catch(() => undefined);
-      };
     },
-    [loadHistory],
+    [follow],
   );
 
-  async function start(clarification?: string) {
-    const q = (clarification && run?.question) || question.trim();
-    if (q.length < 5) return;
+  async function start(clarification?: string, rerunOf?: string) {
+    const q = (rerunOf || clarification ? run?.question : undefined) || question.trim();
+    if (!q || q.length < 5) return;
     setError(null);
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    let id = "";
+    setLive(emptyLive());
+    setConnection("live");
     try {
-      const { run_id } = await api.startRun(dataset.id, q, clarification);
-      await openRun(run_id);
-      loadHistory();
+      const res = await api.startRun(dataset.id, q, (m) => {
+        if (m.kind === "run") {
+          id = m.run_id;
+          setRunId(id);
+          setRun({ id, dataset_id: dataset.id, question: q, status: "running", created_at: new Date().toISOString(),
+            finished_at: null, result: null, execution: "inline" });
+          loadHistory();
+          return;
+        }
+        handle(m);
+        if (m.kind === "done" && id) finish(id);
+      }, { clarification, rerun_of: rerunOf, signal: ctrl.signal });
+      if (!res.inline) {
+        await openRun(res.run_id); // long-lived server: follow over SSE
+        loadHistory();
+      } else if (id && !ctrl.signal.aborted) {
+        const r = await api.run(id); // stream ended: if it ended early, switch to saved progress
+        if (r.status === "running") {
+          setConnection("reconnected");
+          follow(id);
+        }
+      }
     } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      if (id) {
+        setConnection("reconnected"); // the stream broke but the run keeps going on the server
+        follow(id);
+        return;
+      }
       setError((e as Error).message);
     }
   }
@@ -192,6 +249,10 @@ export function AnalyzeView({ dataset }: { dataset: Dataset }) {
               <div className="error-box small" style={{ marginTop: 10 }}>{result.errors.join(" · ")}</div>
             ) : null}
           </div>
+        )}
+
+        {run && connection && connection !== "live" && (
+          <ConnectionBanner mode={connection} run={run} onRerun={() => start(undefined, run.id)} />
         )}
 
         {clar && <ClarificationCard clar={clar} onAnswer={(c) => start(c)} />}
@@ -356,7 +417,7 @@ function ClarificationCard({ clar, onAnswer }: { clar: Clarification; onAnswer: 
   );
 }
 
-function ScopeCard({ spec, alignment }: { spec?: TaskSpec | null; alignment?: Alignment | null }) {
+export function ScopeCard({ spec, alignment }: { spec?: TaskSpec | null; alignment?: Alignment | null }) {
   const badge = (v: string) => (v === "pass" ? "ok" : v === "fail" ? "err" : "muted");
   return (
     <div className="card">
@@ -400,4 +461,30 @@ function ScopeCard({ spec, alignment }: { spec?: TaskSpec | null; alignment?: Al
       ) : null}
     </div>
   );
+}
+
+function ConnectionBanner({ mode, run, onRerun }: { mode: "reconnected" | "interrupted"; run: Run; onRerun: () => void }) {
+  if (mode === "reconnected") {
+    return (
+      <div className="card small" role="status" style={{ borderColor: "var(--accent)" }}>
+        <strong>Reconnected to saved progress.</strong> The investigation is still running on the server; you are
+        seeing what it has saved so far, and new steps appear as they are saved.
+      </div>
+    );
+  }
+  return (
+    <div className="card small" role="alert" style={{ borderColor: "var(--warn)" }}>
+      <strong>This investigation was interrupted.</strong>{" "}
+      {capitalize(run.interruption?.reason ?? "the server stopped working on it before it finished")}.{" "}
+      Everything saved up to that point is shown below. An investigation can't continue from where it stopped:
+      starting it again runs a new, complete investigation.
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn primary small" onClick={onRerun}>Start it again</button>
+      </div>
+    </div>
+  );
+}
+
+function capitalize(s: string): string {
+  return s ? s[0].toUpperCase() + s.slice(1) : s;
 }

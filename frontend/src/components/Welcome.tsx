@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Health } from "../types";
+import { ReplayList } from "./ReplayView";
 
 const STEPS = [
   ["Understand", "Profiles your data: column roles, missing values, outliers, correlations."],
@@ -8,7 +9,9 @@ const STEPS = [
   ["Report", "Interactive charts, a full execution timeline and a downloadable PDF."],
 ];
 
-export function Welcome({ health, onSample }: { health: Health | null; onSample: () => Promise<void> }) {
+export function Welcome({ health, onSample, onReplay }: {
+  health: Health | null; onSample: () => Promise<void>; onReplay: (id: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -20,7 +23,7 @@ export function Welcome({ health, onSample }: { health: Health | null; onSample:
           the agent plan, query, test and verify its way to an evidence-backed answer.
         </p>
         <div className="row" style={{ marginTop: 14 }}>
-          <button className="btn primary" disabled={busy || !health} onClick={async () => {
+          <button className="btn primary" disabled={busy || !health || health.replay_only} onClick={async () => {
             setBusy(true);
             setError(null);
             try {
@@ -51,6 +54,13 @@ export function Welcome({ health, onSample }: { health: Health | null; onSample:
       <p className="small muted">
         Try asking: “Why did our revenue decline last quarter, and which customer segments contributed most?”
       </p>
+      {(health?.replays ?? 0) > 0 && (
+        <div className="stack">
+          <h3 style={{ margin: "8px 0 0" }}>Or watch a recorded investigation</h3>
+          <div className="small muted">Real runs on Cloudflare Workers AI, replayed step by step. No AI budget used.</div>
+          <ReplayList onOpen={onReplay} />
+        </div>
+      )}
     </div>
   );
 }

@@ -166,6 +166,7 @@ export interface Clarification {
 }
 
 export interface RunResult {
+  partial?: boolean;
   spec?: TaskSpec | null;
   alignment?: Alignment | null;
   needs_clarification?: Clarification | null;
@@ -200,6 +201,10 @@ export interface RunResult {
 
 export interface Run {
   id: string;
+  execution?: "background" | "inline";
+  connection?: "live" | "reconnected";
+  interruption?: Interruption | null;
+  rerun_of?: string | null;
   dataset_id: string;
   question: string;
   status: string;
@@ -229,6 +234,9 @@ export interface Health {
   mcp_transport: string;
   public_mode?: boolean;
   access_code_required?: boolean;
+  replay_only?: boolean;
+  execution?: "background" | "inline";
+  replays?: number;
   limits?: {
     max_upload_mb: number;
     max_rows: number;
@@ -238,4 +246,35 @@ export interface Health {
     runs_per_day: number;
     data_ttl_hours: number;
   };
+}
+
+export interface ReplaySummary {
+  id: string;
+  question: string;
+  title: string;
+  answer: string | null;
+  summary: string;
+  recorded_at: string;
+  recorded_with: { provider: string; model: string; agent_budgets: Record<string, number> };
+  dataset: { name: string; table: string; row_count: number; column_count: number };
+  metrics: { latency_s: number; total_tokens: number; llm_calls: number; tool_calls: number; approx_neurons: number };
+  alignment: string | null;
+  hallucination_rate: number | null;
+  has_report: boolean;
+}
+
+export interface Replay {
+  id: string;
+  question: string;
+  recorded_at: string;
+  recorded_with: ReplaySummary["recorded_with"];
+  dataset: ReplaySummary["dataset"];
+  result: RunResult;
+  summary: ReplaySummary;
+}
+
+export interface Interruption {
+  reason: string;
+  detected_at?: string;
+  resumable: false;
 }
