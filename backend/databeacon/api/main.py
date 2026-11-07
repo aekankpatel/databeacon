@@ -27,6 +27,7 @@ from ..llm import provider_info
 from ..mcp_client import MCPToolHub
 from ..observability import setup_tracing
 from ..profiling import profile_table, schema_summary
+from ..replays import get_replay, list_replays, replay_pdf
 from ..runs import RunManager
 from ..sql_guard import SQLValidationError, execute_readonly
 from .security import (
@@ -192,6 +193,8 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
         return {"status": "ok", "version": __version__, "llm": provider_info(),
                 "mcp_transport": settings.mcp_transport, "public_mode": settings.public_mode,
                 "access_code_required": bool(settings.demo_access_code),
+                "replay_only": settings.replay_only, "execution": settings.execution_mode,
+                "replays": len(list_replays()),
                 "limits": {"max_upload_mb": settings.max_upload_mb, "max_rows": settings.max_rows,
                            "max_columns": settings.max_columns,
                            "max_datasets_per_session": settings.max_datasets_per_session,
@@ -257,11 +260,15 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             return _public_ds(existing)
         shared_limiter.hit(f"upload:{ip}", settings.uploads_per_hour, 3600, "uploads")
         _quota(owner)
-        if not SAMPLE_CSV.exists():
+        sample = SAMPLE_CSV if SAMPLE_CSV.exists() else settings.data_dir / "sample" / "ecommerce_orders.csv"
+        if not sample.exists():  # not bundled: generate (deterministically) into the writable data dir
             from sample_data.generate_ecommerce import generate
 
-            await asyncio.to_thread(lambda: generate().to_csv(SAMPLE_CSV, index=False))
-        ds = await asyncio.to_thread(_ingest, SAMPLE_CSV, SAMPLE_NAME, SAMPLE_CSV.name, owner)
+            sample.parent.mkdir(parents=True, exist_ok=True)
+            tmp = sample.with_suffix(".tmp")
+            await asyncio.to_thread(lambda: generate().to_csv(tmp, index=False))
+            tmp.replace(sample)
+        ds = await asyncio.to_thread(_ingest, sample, SAMPLE_NAME, sample.name, owner)
         return _public_ds(ds)
 
     @app.get("/api/datasets/{dataset_id}")
@@ -314,6 +321,9 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
     @app.post("/api/runs", status_code=202)
     async def start_run(body: RunRequest, request: Request, owner: str = Depends(owner_of),
                         ip: str = Depends(ip_of)):
+        if settings.replay_only:
+            raise HTTPException(403, "Live analyses are switched off on this deployment. "
+                                     "Explore the recorded investigations instead.")
         check_access_code(request, settings)
         try:
             registry.get(body.dataset_id, owner)
@@ -415,6 +425,27 @@ def create_app(manager: RunManager | None = None) -> FastAPI:
             raise HTTPException(404, "report not available")
         return Response(data, media_type="application/pdf",
                         headers={"Content-Disposition": f'attachment; filename="databeacon-report-{run_id}.pdf"'})
+
+    # ---------------------------------------------------------------- replays
+    @app.get("/api/replays")
+    async def replays() -> list[dict[str, Any]]:
+        """Recorded investigations: explore DataBeacon without using any AI budget."""
+        return list_replays()
+
+    @app.get("/api/replays/{replay_id}")
+    async def replay(replay_id: str) -> dict[str, Any]:
+        r = get_replay(replay_id)
+        if r is None:
+            raise HTTPException(404, "replay not found")
+        return r
+
+    @app.get("/api/replays/{replay_id}/report.pdf")
+    async def replay_report(replay_id: str) -> Response:
+        data = replay_pdf(replay_id)
+        if not data:
+            raise HTTPException(404, "report not available")
+        return Response(data, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="databeacon-replay-{replay_id}.pdf"'})
 
     # ----------------------------------------------------------------- evals
     @app.get("/api/evals/latest")

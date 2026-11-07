@@ -19,7 +19,9 @@ def _public(public_default: str, local_default: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    data_dir: Path = field(default_factory=lambda: Path(_env("DATA_DIR", "./data")).resolve())
+    # serverless file systems are read-only except /tmp
+    data_dir: Path = field(default_factory=lambda: Path(_env(
+        "DATA_DIR", "/tmp/databeacon" if os.environ.get("VERCEL") else "./data")).resolve())
 
     # LLM
     groq_model: str = field(default_factory=lambda: _env("MODEL", "openai/gpt-oss-120b"))
@@ -70,6 +72,8 @@ class Settings:
     run_deadline_grace_s: float = field(default_factory=lambda: float(_env("RUN_DEADLINE_GRACE_S", "20")))
     # a running investigation whose heartbeat is older than this is considered interrupted
     run_stale_s: float = field(default_factory=lambda: float(_env("RUN_STALE_S", "120")))
+    # serve only recorded investigations (no LLM calls): for demos without AI budget
+    replay_only: bool = field(default_factory=lambda: _env("REPLAY_ONLY", "0").lower() in {"1", "true", "yes"})
     expose_docs: bool = field(default_factory=lambda: _env("EXPOSE_DOCS", _public("0", "1")) == "1")
 
     # MCP transport: "inprocess" (default) or "stdio" (servers run as subprocesses)
