@@ -1,0 +1,29 @@
+# Deployment manifest for Vercel (Python 3.12 runtime). Local development uses backend/.
+[project]
+name = "databeacon-deploy"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.162,<1",
+    "uvicorn>=0.54",
+    "python-multipart>=0.0.32",
+    "pydantic>=2.13,<3",
+    "langchain-core>=1.7,<2",
+    "langchain-openai>=1.7,<2",
+    "langgraph>=1.2,<2",
+    "mcp>=2.3,<3",
+    "duckdb>=2.0,<3",
+    "pandas>=3.0",
+    "numpy>=2.5",
+    "scipy>=1.18",
+    "plotly>=7.1",
+    "reportlab>=5.0",
+    "openpyxl>=3.1",
+    "opentelemetry-api>=1.45",
+    "opentelemetry-sdk>=1.45",
+    "anyio>=4.15",
+    "jsonschema>=4.20",
+]
+
+[tool.uv]
+package = false

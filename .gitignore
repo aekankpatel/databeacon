@@ -23,3 +23,8 @@ frontend/*.tsbuildinfo
 .idea/
 .vscode/
 .DS_Store
+
+# Vercel local build artefacts
+.vercel/
+.vercel_python_packages/
+_uv/
