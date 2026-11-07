@@ -1,0 +1,433 @@
+{
+  "meta": {
+    "timestamp": "2026-11-07T00:43:25+00:00",
+    "mode": "live",
+    "provider": "cloudflare",
+    "model": "@cf/openai/gpt-oss-120b",
+    "budgets": {
+      "max_iterations": 2,
+      "max_tool_calls": 24,
+      "max_steps_per_iteration": 6
+    },
+    "incomplete": "stopped at 'revenue_trend': stored run 8a77b15dcd32 failed on the LLM provider's quota (OpenAIRateLimitError: Error code: 429)",
+    "budget": {
+      "neurons_used_today_before": 10362.7,
+      "run_cap": 7000.0,
+      "prior_spend": 3547.3,
+      "hard_daily_limit_for_run": 9000.0,
+      "free_allocation": 10000,
+      "neurons_spent": 0.0
+    }
+  },
+  "summary": {
+    "cases": 4,
+    "task_success_rate": 1.0,
+    "primary_conclusion_rate": 1.0,
+    "period_correct_rate": 1.0,
+    "metric_correct_rate": 1.0,
+    "grouping_correct_rate": 1.0,
+    "numerical_evidence_rate": 1.0,
+    "alignment_rate": 1.0,
+    "sql_validity": 1.0,
+    "tool_selection_f1": 0.95,
+    "hallucination_rate": 0.0,
+    "avg_latency_s": 69.468,
+    "avg_total_tokens": 18691.0,
+    "avg_tool_calls": 4.0,
+    "error_recovery_rate": 0.0,
+    "scorer_calibration": 1.0,
+    "total_cloudflare_neurons": 2930.9,
+    "benchmark_neurons_incl_interrupted_work": 3547.3
+  },
+  "cases": [
+    {
+      "case": "revenue_decline_attribution",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Enterprise",
+        "dimension": "customer_segment",
+        "metric_column": "revenue",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 1.0,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 0.667,
+        "f1": 0.8
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "5/5",
+      "latency_s": 84.35,
+      "total_tokens": 20246,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 1095,
+          "output_tokens": 1084
+        },
+        "act": {
+          "calls": 4,
+          "input_tokens": 10787,
+          "output_tokens": 1963
+        },
+        "reflect": {
+          "calls": 1,
+          "input_tokens": 1582,
+          "output_tokens": 675
+        },
+        "synthesize": {
+          "calls": 1,
+          "input_tokens": 1874,
+          "output_tokens": 1186
+        }
+      },
+      "llm_calls": 7,
+      "tool_calls": 5,
+      "agent_tool_calls": 3,
+      "fallback_charts": 1,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "realignments": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "period_comparison",
+        "period_comparison",
+        "run_sql"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 822.7,
+      "reused_run_id": "0848f476efd2",
+      "served_by": {
+        "cloudflare:@cf/openai/gpt-oss-120b": 7
+      }
+    },
+    {
+      "case": "discount_shift",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "pass",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Electronics",
+        "dimension": "product_category",
+        "metric_column": "discount_pct",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "got": {
+        "primary_entity": "Electronics",
+        "dimension": "product_category",
+        "metric_column": "discount_pct",
+        "current_period": [
+          "2025-10-01",
+          "2026-01-01"
+        ],
+        "previous_period": [
+          "2025-07-01",
+          "2025-10-01"
+        ]
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 1.0,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "3/3",
+      "latency_s": 72.69,
+      "total_tokens": 18251,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 1049,
+          "output_tokens": 1077
+        },
+        "act": {
+          "calls": 4,
+          "input_tokens": 10409,
+          "output_tokens": 1292
+        },
+        "reflect": {
+          "calls": 1,
+          "input_tokens": 1309,
+          "output_tokens": 245
+        },
+        "synthesize": {
+          "calls": 1,
+          "input_tokens": 1638,
+          "output_tokens": 1232
+        }
+      },
+      "llm_calls": 7,
+      "tool_calls": 4,
+      "agent_tool_calls": 3,
+      "fallback_charts": 0,
+      "iterations": 1,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "realignments": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "period_comparison",
+        "run_sql",
+        "create_chart"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 720.6,
+      "reused_run_id": "daed68f13aa5",
+      "served_by": {
+        "cloudflare:@cf/openai/gpt-oss-120b": 7
+      }
+    },
+    {
+      "case": "shipping_by_region",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "n/a",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "West",
+        "dimension": "region",
+        "metric_column": "days_to_ship",
+        "current_period": null,
+        "previous_period": null
+      },
+      "got": {
+        "primary_entity": "West",
+        "dimension": "region",
+        "metric_column": "days_to_ship",
+        "current_period": [
+          "2024-01-01",
+          "2026-01-01"
+        ],
+        "previous_period": []
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 1.0,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "3/3",
+      "latency_s": 57.19,
+      "total_tokens": 19616,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 963,
+          "output_tokens": 883
+        },
+        "act": {
+          "calls": 5,
+          "input_tokens": 11843,
+          "output_tokens": 490
+        },
+        "reflect": {
+          "calls": 2,
+          "input_tokens": 2049,
+          "output_tokens": 829
+        },
+        "synthesize": {
+          "calls": 1,
+          "input_tokens": 1512,
+          "output_tokens": 1047
+        }
+      },
+      "llm_calls": 9,
+      "tool_calls": 4,
+      "agent_tool_calls": 3,
+      "fallback_charts": 0,
+      "iterations": 2,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 1,
+        "realignments": 0,
+        "revisions": 0
+      },
+      "tools_used": [
+        "run_sql",
+        "compare_groups",
+        "create_chart"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 742.3,
+      "reused_run_id": "24962e3ca49f",
+      "served_by": {
+        "cloudflare:@cf/openai/gpt-oss-120b": 9
+      }
+    },
+    {
+      "case": "return_rate",
+      "status": "completed",
+      "task_success": true,
+      "checks": {
+        "completed": "pass",
+        "alignment": "pass",
+        "primary_conclusion": "pass",
+        "period": "n/a",
+        "metric": "pass",
+        "grouping": "pass",
+        "numerical_evidence": "pass",
+        "hallucination": "pass"
+      },
+      "expected": {
+        "entity": "Apparel",
+        "dimension": "product_category",
+        "metric_column": "is_returned",
+        "current_period": null,
+        "previous_period": null
+      },
+      "got": {
+        "primary_entity": "Apparel",
+        "dimension": "product_category",
+        "metric_column": "is_returned",
+        "current_period": [
+          "2024-01-01",
+          "2026-01-01"
+        ],
+        "previous_period": []
+      },
+      "error": null,
+      "alignment_issues": [],
+      "sql_validity": 1.0,
+      "numbers_stated": 1.0,
+      "tool_selection": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0
+      },
+      "hallucination_rate": 0.0,
+      "findings_verified": "2/2",
+      "latency_s": 63.64,
+      "total_tokens": 16651,
+      "tokens_by_stage": {
+        "plan": {
+          "calls": 1,
+          "input_tokens": 954,
+          "output_tokens": 623
+        },
+        "act": {
+          "calls": 4,
+          "input_tokens": 8138,
+          "output_tokens": 616
+        },
+        "reflect": {
+          "calls": 2,
+          "input_tokens": 1848,
+          "output_tokens": 467
+        },
+        "synthesize": {
+          "calls": 2,
+          "input_tokens": 2534,
+          "output_tokens": 1471
+        }
+      },
+      "llm_calls": 9,
+      "tool_calls": 3,
+      "agent_tool_calls": 2,
+      "fallback_charts": 0,
+      "iterations": 2,
+      "trajectory": {
+        "profiled_first": true,
+        "duplicate_calls": 0,
+        "duplicates_blocked": 0,
+        "tool_errors": 0,
+        "errors_recovered": 0,
+        "replans": 0,
+        "realignments": 1,
+        "revisions": 0
+      },
+      "tools_used": [
+        "run_sql",
+        "create_chart"
+      ],
+      "expect_success": true,
+      "cloudflare_neurons": 645.3,
+      "reused_run_id": "0825f25a9997",
+      "served_by": {
+        "cloudflare:@cf/openai/gpt-oss-120b": 9
+      }
+    }
+  ]
+}
