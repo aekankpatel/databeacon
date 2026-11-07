@@ -115,3 +115,68 @@ async def test_failed_call_releases_reservation(tmp_path):
     with pytest.raises(RuntimeError):
         await chain.ainvoke([HumanMessage("hi")])
     assert budget.remaining() == 9000 and budget.used_today() == 0
+
+
+class Cf4006(Exception):
+    """Mimics the OpenAI SDK error: str() hides Cloudflare's body."""
+
+    def __init__(self):
+        super().__init__("Error code: 429")
+        self.body = {"errors": [{"code": 4006, "message": "AiError: you have used up your daily free allocation "
+                                                         "of 10,000 neurons"}]}
+
+
+async def test_cloudflare_4006_fails_fast_and_blocks_provider(tmp_path):
+    budget = NeuronBudget(tmp_path / "u.sqlite", daily_limit=9000)
+    cf = Fake(exc=Cf4006())
+    chain = ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf)], budget)
+    with pytest.raises(QuotaExhaustedError, match="daily free allocation"):
+        await chain.ainvoke([HumanMessage("hi")])
+    assert cf.calls == 1  # no retry loop on an exhausted allocation
+    assert budget.blocked() and "4006" in budget.blocked()
+    with pytest.raises(QuotaExhaustedError, match="no cloudflare calls until"):
+        await chain.ainvoke([HumanMessage("hi")])
+    assert cf.calls == 1  # blocked: Cloudflare not contacted again
+
+
+async def test_block_falls_through_to_configured_fallback(tmp_path):
+    budget = NeuronBudget(tmp_path / "u.sqlite")
+    budget.block_provider("cloudflare", "test block")
+    cf, groq = Fake("cf"), Fake("groq")
+    out = await ProviderChain([("cloudflare", "@cf/openai/gpt-oss-120b", cf), ("groq", "g", groq)], budget).ainvoke(
+        [HumanMessage("hi")])
+    assert out.content == "groq" and cf.calls == 0
+
+
+def test_rolling_window_counts_last_evening(tmp_path):
+    import sqlite3
+    import time
+
+    path = tmp_path / "u.sqlite"
+    NeuronBudget(path)
+    with sqlite3.connect(path) as c:  # 7,000 neurons spent 3 hours ago (e.g. yesterday evening)
+        c.execute("INSERT INTO llm_calls (ts, provider, model, neurons) VALUES (?, 'cloudflare', 'm', 7000)",
+                  (time.time() - 3 * 3600,))
+        c.execute("INSERT INTO llm_calls (ts, provider, model, neurons) VALUES (?, 'cloudflare', 'm', 5000)",
+                  (time.time() - 30 * 3600,))  # outside 24h
+    rolling = NeuronBudget(path, daily_limit=9000)
+    assert rolling.used() == 7000 and rolling.remaining() == 2000
+    assert rolling.reserve(2500) is None
+
+
+def test_legacy_daily_totals_migrate_conservatively(tmp_path):
+    import sqlite3
+    from datetime import UTC, datetime, timedelta
+
+    path = tmp_path / "u.sqlite"
+    with sqlite3.connect(path) as c:  # a ledger written before per-call timestamps existed
+        c.execute("""CREATE TABLE llm_usage (day TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+            calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0, neurons REAL NOT NULL DEFAULT 0,
+            PRIMARY KEY (day, provider, model))""")
+        yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+        c.execute("INSERT INTO llm_usage VALUES (?, 'cloudflare', 'm', 57, 0, 0, 6815.3)", (yesterday,))
+    b = NeuronBudget(path, daily_limit=9000)
+    # counted at the end of yesterday, i.e. still inside the last 24 hours
+    assert b.used() == pytest.approx(6815.3)
+    assert NeuronBudget(path, daily_limit=9000, window="utc_day").used() == 0

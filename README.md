@@ -149,8 +149,11 @@ which supports native tool calling. Override it with `DATABEACON_MODEL`.
 
 ### Staying inside the free tier
 
-Workers AI's free allocation is **10,000 neurons per day**, reset at 00:00 UTC. DataBeacon keeps a
-per-day ledger (`<data dir>/llm_usage.sqlite`) of the neurons Cloudflare reports with every response,
+Workers AI's free allocation is **10,000 neurons per day**. Cloudflare documents a reset at 00:00 UTC,
+but we saw the allocation still exhausted after midnight by the previous evening's usage. So by default
+DataBeacon counts usage over a **rolling 24 hours** (`DATABEACON_NEURON_WINDOW=rolling24h`; `utc_day`
+for calendar days). It keeps a timestamped ledger (`<data dir>/llm_usage.sqlite`) of the neurons
+Cloudflare reports with every response,
 and refuses a Cloudflare call unless its **worst-case cost** (the prompt plus the full output allowance)
 still fits under `DATABEACON_CLOUDFLARE_DAILY_NEURONS` (default 9,000). Reservations are atomic, so
 concurrent runs cannot jointly overshoot.
@@ -160,7 +163,9 @@ Once the budget is reached, a run either uses the fallback provider or fails wit
 - if the ledger cannot be read, Cloudflare is not called;
 - the budget cannot be set above the 10,000 free allocation unless `DATABEACON_ALLOW_PAID_INFERENCE=1`.
 
-The CI live-evaluation job only runs when started by hand, and `evals.run --max-neurons N` caps a
+If Cloudflare itself reports the allocation exhausted (HTTP 429 with error 4006), the call fails at once
+and Cloudflare is blocked for an hour rather than retried. The CI live-evaluation job only runs when
+started by hand, and `evals.run --max-neurons N` caps a
 benchmark run. `GET /api/usage` shows today's spend. The ledger is per data directory, so processes
 that should share one budget must share `DATABEACON_DATA_DIR`.
 
@@ -375,6 +380,7 @@ cd backend
 python -m evals.run --mode scripted --min-calibration 1.0             # offline, incl. calibration (CI)
 python -m evals.run --case revenue_decline_attribution --max-neurons 3500   # one live case, capped
 python -m evals.run --max-neurons 7000                                 # live benchmark, capped
+python -m evals.run --max-neurons 7000 --prior-spend 3500 --reuse-run return_rate=<run_id>   # resume
 ```
 
 Live results go to `evals/results/latest.json`/`.md`, offline ones to `latest_scripted.*`. Both show up

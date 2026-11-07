@@ -161,6 +161,12 @@ async def main() -> int:
             score = score_case(case, run, resolve_gold(ds_db, case, by_id))
             score.update({"cloudflare_neurons": neurons, "reused_run_id": run["id"],
                           "served_by": m.get("served_by")})
+            if score.get("error") and any(k in score["error"] for k in ("QuotaExhaustedError", "4006", "429")):
+                # same rule as live runs: a provider-quota failure says nothing about the agent
+                incomplete = (f"stopped at '{case['id']}': stored run {run['id']} failed on the LLM provider's "
+                              f"quota ({score['error'][:80]})")
+                print(f"  {incomplete}", flush=True)
+                break
             scores.append(score)
             max_case = max(max_case, neurons)
             print(f"▶ {case['id']}: reused stored run {run['id']}", flush=True)
@@ -192,14 +198,19 @@ async def main() -> int:
         score = score_case(case, run, gold)
         score["cloudflare_neurons"] = neurons
         score["served_by"] = ((run.get("result") or {}).get("metrics") or {}).get("served_by")
-        if score.get("error") and "QuotaExhaustedError" in score["error"]:
+        if score.get("error") and ("QuotaExhaustedError" in score["error"] or "4006" in score["error"]):
             incomplete = f"stopped at '{case['id']}': LLM provider quota exhausted"
             print(f"  {incomplete}", flush=True)
             break
         scores.append(score)
         if score.get("error"):
             print(f"  error: {score['error'][:200]}", flush=True)
-        verdict = "ok" if score["task_success"] == score["expect_success"] else "SCORER MISJUDGED"
+        if score["task_success"] == score["expect_success"]:
+            verdict = "ok"
+        elif case.get("calibration"):
+            verdict = "SCORER MISJUDGED"  # a deliberately wrong/right scripted run was scored incorrectly
+        else:
+            verdict = "case failed"
         print(f"  success={score['task_success']} (expected {score['expect_success']}: {verdict}) "
               f"checks={score['checks']} tokens={score['total_tokens']} neurons={neurons}", flush=True)
         if score["alignment_issues"]:
@@ -224,6 +235,8 @@ async def main() -> int:
     (out / f"eval_{args.mode}_{stamp}.json").write_text(json.dumps(payload, indent=2))
     print(json.dumps(summary, indent=2))
     if incomplete:
+        (out / f"eval_{args.mode}_{stamp}.md").write_text(
+            f"> **Incomplete:** {incomplete}. Cases not listed were not run.\n\n" + _markdown(summary, scores, meta))
         print(f"Suite incomplete ({incomplete}); latest results left unchanged.")
         return 2
     name = "latest" if args.mode == "live" else "latest_scripted"

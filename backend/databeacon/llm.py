@@ -187,6 +187,14 @@ class ProviderChain:
         for i, (provider, model, llm) in enumerate(self.entries):
             reservation = None
             if provider == "cloudflare":
+                try:
+                    block = self.budget.blocked(provider) if self.budget is not None else None
+                except Exception as exc:  # noqa: BLE001 - unreadable ledger: fail closed
+                    block = f"neuron ledger unavailable ({type(exc).__name__})"
+                if block:
+                    last_exc = QuotaExhaustedError(f"Cloudflare call refused: {block}")
+                    self.shared["errors"].append(str(last_exc))
+                    continue
                 if self.budget is None:  # fail closed: never call Cloudflare without accounting
                     last_exc = QuotaExhaustedError("Cloudflare call refused: no neuron budget configured.")
                     self.shared["errors"].append(str(last_exc))
@@ -210,6 +218,10 @@ class ProviderChain:
             except Exception as exc:  # noqa: BLE001 - try the next provider
                 if self.budget is not None:
                     self.budget.release(reservation)
+                    if provider == "cloudflare" and isinstance(exc, QuotaExhaustedError):
+                        # Cloudflare's own meter says the free allocation is gone: stop calling it
+                        self.budget.block_provider(provider, "Cloudflare reported its daily free allocation "
+                                                             "exhausted (error 4006)")
                 last_exc = exc
                 self.shared["errors"].append(f"{provider}: {type(exc).__name__}: {str(exc)[:200]}")
                 continue
@@ -256,8 +268,29 @@ class QuotaExhaustedError(RuntimeError):
     """The provider's daily quota is used up; retrying within this run is pointless."""
 
 
-def _is_daily_quota(exc: Exception) -> bool:
-    msg = str(exc).lower()
+def error_text(exc: BaseException) -> str:
+    """The full error, including the provider's response body: OpenAI-SDK errors often stringify to just
+    'Error code: 429', hiding Cloudflare's code 4006 'daily free allocation' message."""
+    parts = [str(exc)]
+    body = getattr(exc, "body", None)
+    if body:
+        parts.append(json.dumps(body, default=str) if not isinstance(body, str) else body)
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        try:
+            parts.append(resp.text[:2000])
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+    cause = exc.__cause__
+    if cause is not None and cause is not exc:
+        parts.append(error_text(cause))
+    return " | ".join(p for p in parts if p)
+
+
+def _is_daily_quota(exc: BaseException) -> bool:
+    msg = error_text(exc).lower()
+    if '"code": 4006' in msg or "4006" in msg and "allocation" in msg:
+        return True
     return ("per day" in msg or "(tpd)" in msg or "(rpd)" in msg or "neuron" in msg
             or ("daily" in msg and ("limit" in msg or "allocation" in msg)))
 
@@ -280,7 +313,7 @@ async def ainvoke_with_retry(llm: Any, messages: list[BaseMessage], attempts: in
         except Exception as exc:  # noqa: BLE001
             if _is_daily_quota(exc):
                 raise QuotaExhaustedError(
-                    f"LLM provider daily quota exhausted: {str(exc)[:300]}") from exc
+                    f"LLM provider daily quota exhausted: {error_text(exc)[:400]}") from exc
             if i == attempts - 1 or not _is_retryable(exc):
                 raise
             m = _RETRY_AFTER_RE.search(str(exc))
