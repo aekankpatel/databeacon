@@ -93,6 +93,14 @@ stateDiagram-v2
     report --> [*]
 ```
 
+## Deployment
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for:
+- the public-deployment readiness audit;
+- `DATABEACON_PUBLIC_MODE`: per-visitor isolation, rate limits, retention and an optional access code;
+- why the current backend can't run as-is on Vercel serverless functions;
+- the recommended $0 architecture and launch steps.
+
 ## Quick start
 
 ### Docker (single container, UI + API)
